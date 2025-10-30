@@ -1,0 +1,19 @@
+{
+  "packageName": "Enhanced Battery Monitor",
+  "author": "David Koser",
+  "version": "1.0.0",
+  "minimumHEVersion": "2.2.0",
+  "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
+  "communityLink": "",
+  "dateReleased": "2025-10-29",
+  "apps": [
+    {
+      "id": "57ec6224-ec08-417e-a5b3-d6ebbaec246a",
+      "name": "Enhanced Battery Monitor",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/battery-monitor.groovy",
+      "required": false,
+      "oauth": false
+    }
+  ]
+}
