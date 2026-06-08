@@ -88,8 +88,20 @@ def mainPage() {
  */
 def updated() {
 	unsubscribe() // Remove all existing device event subscriptions
-	if(enableDebug) log.debug "Battery Monitor updated - reinitializing"
+	if(enableDebug) {
+		log.debug "Battery Monitor updated - reinitializing"
+		runIn(1800, logsOff) // Auto-disable debug logging after 30 minutes
+	}
 	initialize()  // Restart the app with new settings
+}
+
+/**
+ * Auto-disables debug logging 30 minutes after it is enabled, following the
+ * Hubitat convention so verbose logging never stays on indefinitely.
+ */
+void logsOff() {
+	log.warn "Battery Monitor: debug logging disabled"
+	app.updateSetting("enableDebug", [value: "false", type: "bool"])
 }
 
 /**
