@@ -6,6 +6,14 @@
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
   "dateReleased": "2026-04-22",
+  "category": "Convenience",
+  "tags": [
+    "Climate Control",
+    "Cloud",
+    "Lights & Switches",
+    "Monitoring",
+    "Notifications"
+  ],
   "apps": [
     {
       "id": "57ec6224-ec08-417e-a5b3-d6ebbaec246a",

@@ -1,0 +1,20 @@
+{
+  "author": "David Koser",
+  "gitHubUrl": "https://github.com/djkoser/hubitat",
+  "payPalUrl": "",
+  "packages": [
+    {
+      "name": "David Koser's Hubitat Apps & Drivers",
+      "category": "Convenience",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/packageManifest.json",
+      "description": "A collection of Hubitat apps and drivers: Enhanced Battery Monitor (threshold-crossing battery notifications) and FanSync WiFi Fan (cloud driver for Fanimation FanSync fans with light and direction control).",
+      "tags": [
+        "Climate Control",
+        "Cloud",
+        "Lights & Switches",
+        "Monitoring",
+        "Notifications"
+      ]
+    }
+  ]
+}
