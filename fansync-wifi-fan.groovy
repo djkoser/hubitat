@@ -189,6 +189,7 @@ def parse(String raw) {
 			}
 			if (logEnable) log.debug "Devices: ${devices*.device}"
 			state.phase = "ready"
+			unschedule("initialize") // cancel any pending reconnect now that we're connected
 			sendEvent(name: "connectionStatus", value: "connected")
 			pollStatus()
 			schedulePoll()
@@ -217,18 +218,18 @@ private Map extractStatus(Map json) {
 
 def on() {
 	fanSet(["H00": 1])
-	sendEvent(name: "switch", value: "on")
+	sendEvent(name: "switch", value: "on", descriptionText: "${device.displayName} switch is on")
 }
 
 def off() {
 	fanSet(["H00": 0])
-	sendEvent(name: "switch", value: "off")
+	sendEvent(name: "switch", value: "off", descriptionText: "${device.displayName} switch is off")
 }
 
 def setLevel(def level, def duration = null) {
 	def pct = clamp(level as Integer, 1, 100)
 	fanSet(["H00": 1, "H02": pct])
-	sendEvent(name: "level", value: pct)
+	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
 }
 
 def setSpeed(String speed) {
@@ -245,7 +246,7 @@ def setSpeed(String speed) {
 	def pct = pctMap[speed] ?: 50
 	state.lastSpeed = speed
 	fanSet(["H00": 1, "H02": pct])
-	sendEvent(name: "speed", value: speed)
+	sendEvent(name: "speed", value: speed, descriptionText: "${device.displayName} speed is ${speed}")
 }
 
 def cycleSpeed() {
@@ -258,24 +259,24 @@ def cycleSpeed() {
 
 def setFanDirection(String direction) {
 	fanSet(["H06": (direction == "reverse") ? 1 : 0])
-	sendEvent(name: "fanDirection", value: direction)
+	sendEvent(name: "fanDirection", value: direction, descriptionText: "${device.displayName} fan direction is ${direction}")
 }
 
 def lightOn() {
 	fanSet(["H0B": 1])
-	sendEvent(name: "lightSwitch", value: "on")
+	sendEvent(name: "lightSwitch", value: "on", descriptionText: "${device.displayName} light is on")
 }
 
 def lightOff() {
 	fanSet(["H0B": 0])
-	sendEvent(name: "lightSwitch", value: "off")
+	sendEvent(name: "lightSwitch", value: "off", descriptionText: "${device.displayName} light is off")
 }
 
 def setLightLevel(def level) {
 	def pct = clamp(level as Integer, 1, 100)
 	fanSet(["H0B": 1, "H0C": pct])
-	sendEvent(name: "lightLevel", value: pct)
-	sendEvent(name: "lightSwitch", value: "on")
+	sendEvent(name: "lightLevel", value: pct, unit: "%", descriptionText: "${device.displayName} light level is ${pct}%")
+	sendEvent(name: "lightSwitch", value: "on", descriptionText: "${device.displayName} light is on")
 }
 
 def discoverDevices() {
@@ -311,15 +312,31 @@ private wsSend(Map payload) {
 }
 
 private updateAttributes(Map status) {
-	if (status["H00"] != null) sendEvent(name: "switch",       value: status["H00"] == 1 ? "on" : "off")
-	if (status["H02"] != null) sendEvent(name: "level",        value: status["H02"] as Integer)
-	if (status["H06"] != null) sendEvent(name: "fanDirection", value: status["H06"] == 1 ? "reverse" : "forward")
-	if (status["H0B"] != null) sendEvent(name: "lightSwitch",  value: status["H0B"] == 1 ? "on" : "off")
-	if (status["H0C"] != null) sendEvent(name: "lightLevel",   value: status["H0C"] as Integer)
+	def dn = device.displayName
+	if (status["H00"] != null) {
+		def v = status["H00"] == 1 ? "on" : "off"
+		sendEvent(name: "switch", value: v, descriptionText: "${dn} switch is ${v}")
+	}
+	if (status["H02"] != null) {
+		def pct = status["H02"] as Integer
+		sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${dn} level is ${pct}%")
+	}
+	if (status["H06"] != null) {
+		def v = status["H06"] == 1 ? "reverse" : "forward"
+		sendEvent(name: "fanDirection", value: v, descriptionText: "${dn} fan direction is ${v}")
+	}
+	if (status["H0B"] != null) {
+		def v = status["H0B"] == 1 ? "on" : "off"
+		sendEvent(name: "lightSwitch", value: v, descriptionText: "${dn} light is ${v}")
+	}
+	if (status["H0C"] != null) {
+		def pct = status["H0C"] as Integer
+		sendEvent(name: "lightLevel", value: pct, unit: "%", descriptionText: "${dn} light level is ${pct}%")
+	}
 	if (status["H02"] != null) {
 		def pct = status["H02"] as Integer
 		def spd = pct <= 0 ? "off" : pct <= 30 ? "low" : pct <= 45 ? "medium-low" : pct <= 60 ? "medium" : pct <= 85 ? "medium-high" : "high"
-		sendEvent(name: "speed", value: spd)
+		sendEvent(name: "speed", value: spd, descriptionText: "${dn} speed is ${spd}")
 	}
 }
 
