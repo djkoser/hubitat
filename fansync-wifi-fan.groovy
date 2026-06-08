@@ -36,7 +36,7 @@ metadata {
 
 		command "lightOn"
 		command "lightOff"
-		command "setLightLevel",   [[name: "level*",     type: "NUMBER", range: "1..100",
+		command "setLightLevel",   [[name: "level*",     type: "NUMBER",
 									 description: "Light brightness 1-100"]]
 		command "setFanDirection", [[name: "direction*", type: "ENUM",
 									 constraints: ["forward", "reverse"]]]
