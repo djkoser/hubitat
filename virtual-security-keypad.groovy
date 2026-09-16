@@ -19,6 +19,7 @@ metadata {
 			   importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/virtual-security-keypad.groovy") {
 		capability "Actuator"
 		capability "SecurityKeypad"
+		capability "Switch"
 
 		attribute "exitAllowance", "number"
 
@@ -35,6 +36,7 @@ metadata {
 
 def installed() {
 	sendEvent(name: "securityKeypad", value: "disarmed", descriptionText: "${device.displayName} is disarmed")
+	sendEvent(name: "switch", value: "off")
 	sendEvent(name: "codeLength",     value: 4)
 	sendEvent(name: "maxCodes",       value: 20)
 	sendEvent(name: "lockCodes",      value: JsonOutput.toJson([:]))
@@ -53,6 +55,12 @@ def logsOff() {
 
 // ── Arm / Disarm ─────────────────────────────────────────────────────────────
 
+// Switch capability mirrors the arm state (on = armed away, off = disarmed) so
+// integrations that only render switch-like controls (e.g. the Google Home app,
+// whose SecuritySystem tile is unreliable without an On/Off trait) get a UI.
+def on()  { armAway() }
+def off() { disarm() }
+
 def armAway()  { setKeypadState("armed away") }
 def armHome()  { setKeypadState("armed home") }
 def armNight() { setKeypadState("armed night") }
@@ -61,6 +69,7 @@ def disarm()   { setKeypadState("disarmed") }
 private setKeypadState(String value) {
 	if (logEnable) log.debug "securityKeypad -> ${value}"
 	sendEvent(name: "securityKeypad", value: value, descriptionText: "${device.displayName} is ${value}")
+	sendEvent(name: "switch", value: (value == "disarmed") ? "off" : "on")
 }
 
 // ── Delays ───────────────────────────────────────────────────────────────────
