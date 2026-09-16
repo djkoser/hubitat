@@ -69,12 +69,13 @@ def initialize() {
 		return
 	}
 	sendEvent(name: "connectionStatus", value: "connecting")
-	if (state.token) {
+	if (state.token && !tokenExpired()) {
 		// Reuse the cached token — the session endpoint rate-limits (HTTP 429),
-		// so only log in over HTTP when we don't have a token or it's rejected.
+		// so only log in over HTTP when we don't have a live token.
 		state.phase = "ws_connecting"
 		connectWebSocket()
 	} else {
+		state.token = null
 		state.phase = "http_login"
 		httpLogin()
 	}
@@ -102,6 +103,13 @@ def httpLoginCallback(response, data) {
 	if (response.getStatus() == 429) {
 		log.warn "FanSync login rate-limited (HTTP 429) — backing off"
 		scheduleReconnect()
+		return
+	}
+	if (response.getStatus() in [401, 403]) {
+		// Bad credentials — retrying would hammer the rate-limited session
+		// endpoint forever. Stop; the user must fix email/password and Save.
+		log.error "FanSync credentials rejected (HTTP ${response.getStatus()}) — update email/password and Save Preferences"
+		sendEvent(name: "connectionStatus", value: "disconnected")
 		return
 	}
 	if (response.getStatus() != 200) {
@@ -154,6 +162,7 @@ def webSocketStatus(String status) {
 // ── Message Dispatch ──────────────────────────────────────────────────────────
 
 def parse(String raw) {
+	state.lastRx = now()
 	if (logEnable) log.debug "WS recv [${state.phase}]: ${raw}"
 	def json
 	try { json = new JsonSlurper().parseText(raw) }
@@ -201,16 +210,27 @@ def parse(String raw) {
 }
 
 private onReadyMessage(Map json) {
-	// Unsolicited change events carry the device id directly
-	if (json?.data?.device && json?.data?.changes?.status instanceof Map) {
-		routeStatus(json.data.device as String, json.data.changes.status)
+	// Responses to our pending get/set requests — matched by id.
+	// Set acks include a fresh data.status, so they confirm state too.
+	if (json?.id != null) {
+		def did = state.pending?.remove(json.id.toString())
+		def status = extractStatus(json)
+		if (did && status) routeStatus(did, status)
 		return
 	}
-	// Responses to our "get" requests are matched to a device via the pending map
-	if (json?.id != null && json?.data?.status instanceof Map) {
-		def did = state.pending?.remove(json.id.toString())
-		if (did) routeStatus(did, json.data.status)
-	}
+	// Unsolicited pushes — device id at top level or inside data,
+	// status at data.status or data.changes.status (shapes vary by API version).
+	def did = json?.device ?: json?.data?.device
+	def status = extractStatus(json)
+	if (did && status) routeStatus(did as String, status)
+}
+
+private Map extractStatus(Map json) {
+	def data = json?.data
+	if (!(data instanceof Map)) return null
+	if (data.status instanceof Map)          return data.status
+	if (data.changes?.status instanceof Map) return data.changes.status
+	return null
 }
 
 private routeStatus(String did, Map status) {
@@ -249,7 +269,9 @@ void componentSet(cd, Map keys) {
 	def did = cd.getDataValue("fansyncId")
 	if (!did) { log.warn "componentSet: ${cd.displayName} has no fansyncId"; return }
 	if (state.phase != "ready") { log.warn "componentSet: not connected (phase=${state.phase})"; return }
-	wsSend([id: nextReqId(), request: "set", device: did, data: keys])
+	def id = nextReqId()
+	state.pending[id.toString()] = did // set acks carry data.status — route it back
+	wsSend([id: id, request: "set", device: did, data: keys])
 }
 
 void componentRefresh(cd) {
@@ -280,6 +302,11 @@ def refresh() {
 
 private pollDevice(String did) {
 	if (!did || state.phase != "ready") return
+	// A dead socket never answers, so orphaned entries accumulate — cap the map
+	if (state.pending.size() > 40) {
+		log.warn "FanSync: pruning ${state.pending.size()} unanswered requests"
+		state.pending = [:]
+	}
 	def id = nextReqId()
 	state.pending[id.toString()] = did
 	wsSend([id: id, request: "get", device: did])
@@ -289,6 +316,24 @@ private wsSend(Map payload) {
 	def msg = JsonOutput.toJson(payload)
 	if (logEnable) log.debug "WS send: ${msg}"
 	interfaces.webSocket.sendMessage(msg)
+}
+
+// The session token is a JWT — check its exp claim locally so we never burn a
+// WebSocket connect on a token we already know is dead (per tjbaker/homeassistant-fansync).
+private boolean tokenExpired() {
+	try {
+		def parts = state.token.split("\\.")
+		if (parts.size() != 3) return false // not a JWT — let the server judge it
+		def b64 = parts[1].replace('-', '+').replace('_', '/')
+		while (b64.length() % 4 != 0) b64 += "="
+		def claims = new JsonSlurper().parseText(new String(b64.decodeBase64(), "UTF-8"))
+		if (!(claims?.exp instanceof Number)) return false
+		// Treat anything within 60s of expiry as expired
+		return (claims.exp as Long) * 1000L < now() + 60000L
+	} catch (e) {
+		if (logEnable) log.debug "tokenExpired parse failure: ${e}"
+		return false
+	}
 }
 
 private int nextReqId() {
@@ -314,6 +359,16 @@ private schedulePoll() {
 }
 
 def scheduledPoll() {
+	// Silence watchdog: polls should produce responses. If nothing has arrived
+	// in 3 poll intervals (min 180s), the socket is half-open — pings can pass
+	// while data doesn't — so rebuild the connection (token is reused, no login).
+	def secs = pollSecs ? pollSecs as Integer : 60
+	def silentMs = Math.max(3 * secs, 180) * 1000L
+	if (state.lastRx && now() - (state.lastRx as Long) > silentMs) {
+		log.warn "FanSync: no traffic in ${(now() - (state.lastRx as Long)) / 1000}s — reconnecting"
+		initialize()
+		return
+	}
 	refresh()
 	schedulePoll()
 }

@@ -28,6 +28,7 @@ metadata {
 		capability "Refresh"
 
 		attribute "fanDirection", "enum",   ["forward", "reverse"]
+		attribute "preset",       "enum",   ["normal", "fresh_air"]
 		attribute "lightSwitch",  "enum",   ["on", "off"]
 		attribute "lightLevel",   "number"
 
@@ -37,6 +38,8 @@ metadata {
 									 description: "Light brightness 1-100"]]
 		command "setFanDirection", [[name: "direction*", type: "ENUM",
 									 constraints: ["forward", "reverse"]]]
+		command "setPreset",       [[name: "preset*",    type: "ENUM",
+									 constraints: ["normal", "fresh_air"]]]
 	}
 
 	preferences {
@@ -75,7 +78,7 @@ def off() {
 
 def setLevel(def level, def duration = null) {
 	def pct = clamp(level as Integer, 1, 100)
-	parent.componentSet(device, ["H00": 1, "H02": pct])
+	parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])
 	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
 }
 
@@ -92,7 +95,7 @@ def setSpeed(String speed) {
 	if (speed == "on")  { setSpeed(state.lastSpeed ?: "medium"); return }
 	def pct = pctMap[speed] ?: 50
 	state.lastSpeed = speed
-	parent.componentSet(device, ["H00": 1, "H02": pct])
+	parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])
 	sendEvent(name: "speed", value: speed, descriptionText: "${device.displayName} speed is ${speed}")
 }
 
@@ -105,8 +108,14 @@ def cycleSpeed() {
 }
 
 def setFanDirection(String direction) {
-	parent.componentSet(device, ["H06": (direction == "reverse") ? 1 : 0])
+	parent.componentSet(device, ["H00": 1, "H06": (direction == "reverse") ? 1 : 0])
 	sendEvent(name: "fanDirection", value: direction, descriptionText: "${device.displayName} fan direction is ${direction}")
+}
+
+def setPreset(String preset) {
+	// H01: 0=normal, 1=fresh_air (breeze). Speed changes reset this to normal.
+	parent.componentSet(device, ["H00": 1, "H01": (preset == "fresh_air") ? 1 : 0])
+	sendEvent(name: "preset", value: preset, descriptionText: "${device.displayName} preset is ${preset}")
 }
 
 def lightOn() {
@@ -145,6 +154,10 @@ void parseStatus(Map status) {
 		sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${dn} level is ${pct}%")
 		def spd = pct <= 0 ? "off" : pct <= 30 ? "low" : pct <= 45 ? "medium-low" : pct <= 60 ? "medium" : pct <= 85 ? "medium-high" : "high"
 		sendEvent(name: "speed", value: spd, descriptionText: "${dn} speed is ${spd}")
+	}
+	if (status["H01"] != null) {
+		def v = status["H01"] == 1 ? "fresh_air" : "normal"
+		sendEvent(name: "preset", value: v, descriptionText: "${dn} preset is ${v}")
 	}
 	if (status["H06"] != null) {
 		def v = status["H06"] == 1 ? "reverse" : "forward"
