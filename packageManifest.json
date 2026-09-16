@@ -1,11 +1,11 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
-  "dateReleased": "2026-09-15",
+  "dateReleased": "2026-09-16",
   "category": "Convenience",
   "tags": [
     "Climate Control",
@@ -37,6 +37,13 @@
       "name": "FanSync Fan",
       "namespace": "fansync",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-fan.groovy",
+      "required": false
+    },
+    {
+      "id": "9ebc985e-e177-4f96-9333-763b32f84dd9",
+      "name": "Virtual Security Keypad",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/virtual-security-keypad.groovy",
       "required": false
     }
   ]
