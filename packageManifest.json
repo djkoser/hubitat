@@ -1,11 +1,11 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
-  "dateReleased": "2026-06-07",
+  "dateReleased": "2026-09-15",
   "category": "Convenience",
   "tags": [
     "Climate Control",
@@ -30,6 +30,20 @@
       "name": "FanSync WiFi Fan",
       "namespace": "fansync",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-wifi-fan.groovy",
+      "required": false
+    },
+    {
+      "id": "4cb21fb7-aa3b-4dba-a996-2e7feccde578",
+      "name": "FanSync Controller",
+      "namespace": "fansync",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-controller.groovy",
+      "required": false
+    },
+    {
+      "id": "64169271-a13c-42d7-98c4-695e35ac768c",
+      "name": "FanSync Fan",
+      "namespace": "fansync",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-fan.groovy",
       "required": false
     }
   ]
