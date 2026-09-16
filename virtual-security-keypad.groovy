@@ -20,6 +20,8 @@ metadata {
 		capability "Actuator"
 		capability "SecurityKeypad"
 		capability "Switch"
+		capability "Lock"
+		capability "LockCodes"
 
 		attribute "exitAllowance", "number"
 
@@ -37,6 +39,7 @@ metadata {
 def installed() {
 	sendEvent(name: "securityKeypad", value: "disarmed", descriptionText: "${device.displayName} is disarmed")
 	sendEvent(name: "switch", value: "off")
+	sendEvent(name: "lock",   value: "unlocked")
 	sendEvent(name: "codeLength",     value: 4)
 	sendEvent(name: "maxCodes",       value: 20)
 	sendEvent(name: "lockCodes",      value: JsonOutput.toJson([:]))
@@ -55,11 +58,14 @@ def logsOff() {
 
 // ── Arm / Disarm ─────────────────────────────────────────────────────────────
 
-// Switch capability mirrors the arm state (on = armed away, off = disarmed) so
-// integrations that only render switch-like controls (e.g. the Google Home app,
-// whose SecuritySystem tile is unreliable without an On/Off trait) get a UI.
-def on()  { armAway() }
-def off() { disarm() }
+// Switch and Lock capabilities mirror the arm state (on/locked = armed away,
+// off/unlocked = disarmed) so integrations that render switch- or lock-style
+// controls (e.g. the Google Home app, whose SecuritySystem tile is unreliable)
+// get a proper UI. Lock also makes the device manageable by Lock Code Manager.
+def on()     { armAway() }
+def off()    { disarm() }
+def lock()   { armAway() }
+def unlock() { disarm() }
 
 def armAway()  { setKeypadState("armed away") }
 def armHome()  { setKeypadState("armed home") }
@@ -70,6 +76,8 @@ private setKeypadState(String value) {
 	if (logEnable) log.debug "securityKeypad -> ${value}"
 	sendEvent(name: "securityKeypad", value: value, descriptionText: "${device.displayName} is ${value}")
 	sendEvent(name: "switch", value: (value == "disarmed") ? "off" : "on")
+	sendEvent(name: "lock",   value: (value == "disarmed") ? "unlocked" : "locked",
+			  descriptionText: "${device.displayName} is ${(value == "disarmed") ? "unlocked" : "locked"}")
 }
 
 // ── Delays ───────────────────────────────────────────────────────────────────
