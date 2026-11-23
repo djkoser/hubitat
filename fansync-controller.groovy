@@ -52,6 +52,9 @@ def installed() {
 def updated() {
 	// Credentials may have changed — force a fresh login
 	state.token = null
+	// Schedule the debug auto-off ONLY here: initialize() runs on every
+	// reconnect, and rescheduling there kept pushing the 30-min timer out.
+	if (logEnable) runIn(1800, "logsOff")
 	initialize()
 }
 
@@ -60,9 +63,14 @@ def uninstalled() {
 }
 
 def initialize() {
-	unschedule()
+	// Cancel only our own reconnect/poll jobs — a blanket unschedule() would
+	// also cancel the pending logsOff and leave debug logging on indefinitely.
+	unschedule("initialize")
+	unschedule("scheduledPoll")
+	// Mark the close as deliberate so the resulting "status: closing" callback
+	// doesn't schedule a spurious reconnect (and double the backoff).
+	state.intentionalCloseAt = now()
 	try { interfaces.webSocket.close() } catch (ignored) {}
-	if (logEnable) runIn(1800, "logsOff")
 	state.pending = [:]
 	if (!email || !password) {
 		log.warn "FanSync: email/password not configured"
@@ -160,6 +168,12 @@ def webSocketStatus(String status) {
 	if (status.startsWith("status: open")) {
 		state.phase = "ws_login"
 		wsSend([id: 1, request: "login", data: [token: state.token]])
+	} else if (status.startsWith("status: closing") && state.intentionalCloseAt &&
+			   now() - (state.intentionalCloseAt as Long) < 10000L) {
+		// Echo of our own close in initialize() — a new connection is already
+		// underway. Time-windowed (not a one-shot flag) because the old socket's
+		// "closing" can arrive before or after the new socket's "open".
+		if (logEnable) log.debug "Ignoring close of previous socket"
 	} else if (status.startsWith("failure:") || status.startsWith("status: closing")) {
 		scheduleReconnect()
 	}
@@ -216,6 +230,12 @@ def parse(String raw) {
 }
 
 private onReadyMessage(Map json) {
+	// Device list from discoverDevices() — handled without leaving "ready",
+	// so fan commands and status pushes keep flowing during discovery.
+	if (json?.id == 2) {
+		syncChildren((json?.data instanceof List) ? json.data : [])
+		return
+	}
 	// Responses to our pending get/set requests — matched by id.
 	// Set acks include a fresh data.status, so they confirm state too.
 	if (json?.id != null) {
@@ -270,14 +290,17 @@ private syncChildren(List devices) {
 	}
 }
 
-// Called by child devices — send protocol keys to this child's fan
-void componentSet(cd, Map keys) {
+// Called by child devices — send protocol keys to this child's fan.
+// Returns true only if the command was actually sent, so the child can skip
+// its optimistic state update when the command was dropped.
+boolean componentSet(cd, Map keys) {
 	def did = cd.getDataValue("fansyncId")
-	if (!did) { log.warn "componentSet: ${cd.displayName} has no fansyncId"; return }
-	if (state.phase != "ready") { log.warn "componentSet: not connected (phase=${state.phase})"; return }
+	if (!did) { log.warn "componentSet: ${cd.displayName} has no fansyncId"; return false }
+	if (state.phase != "ready") { log.warn "componentSet: ${cd.displayName} command dropped — not connected (phase=${state.phase})"; return false }
 	def id = nextReqId()
 	state.pending[id.toString()] = did // set acks carry data.status — route it back
 	wsSend([id: id, request: "set", device: did, data: keys])
+	return true
 }
 
 void componentRefresh(cd) {
@@ -288,7 +311,7 @@ void componentRefresh(cd) {
 
 def discoverDevices() {
 	if (state.phase == "ready") {
-		state.phase = "ws_list_devices"
+		// Stay in "ready": onReadyMessage() picks up the id-2 list response.
 		wsSend([id: 2, request: "lst_device"])
 	} else {
 		log.warn "discoverDevices: not connected (phase=${state.phase})"

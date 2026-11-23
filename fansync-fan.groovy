@@ -65,20 +65,22 @@ def logsOff() {
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
+// Each command updates state only if the parent actually sent it; a dropped
+// command (controller disconnected) must not leave a phantom on/off state.
 
 def on() {
-	parent.componentSet(device, ["H00": 1])
+	if (!parent.componentSet(device, ["H00": 1])) return
 	sendEvent(name: "switch", value: "on", descriptionText: "${device.displayName} switch is on")
 }
 
 def off() {
-	parent.componentSet(device, ["H00": 0])
+	if (!parent.componentSet(device, ["H00": 0])) return
 	sendEvent(name: "switch", value: "off", descriptionText: "${device.displayName} switch is off")
 }
 
 def setLevel(def level, def duration = null) {
 	def pct = clamp(level as Integer, 1, 100)
-	parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])
+	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
 }
 
@@ -94,8 +96,8 @@ def setSpeed(String speed) {
 	if (speed == "off") { off(); return }
 	if (speed == "on")  { setSpeed(state.lastSpeed ?: "medium"); return }
 	def pct = pctMap[speed] ?: 50
+	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	state.lastSpeed = speed
-	parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])
 	sendEvent(name: "speed", value: speed, descriptionText: "${device.displayName} speed is ${speed}")
 }
 
@@ -108,29 +110,29 @@ def cycleSpeed() {
 }
 
 def setFanDirection(String direction) {
-	parent.componentSet(device, ["H00": 1, "H06": (direction == "reverse") ? 1 : 0])
+	if (!parent.componentSet(device, ["H00": 1, "H06": (direction == "reverse") ? 1 : 0])) return
 	sendEvent(name: "fanDirection", value: direction, descriptionText: "${device.displayName} fan direction is ${direction}")
 }
 
 def setPreset(String preset) {
 	// H01: 0=normal, 1=fresh_air (breeze). Speed changes reset this to normal.
-	parent.componentSet(device, ["H00": 1, "H01": (preset == "fresh_air") ? 1 : 0])
+	if (!parent.componentSet(device, ["H00": 1, "H01": (preset == "fresh_air") ? 1 : 0])) return
 	sendEvent(name: "preset", value: preset, descriptionText: "${device.displayName} preset is ${preset}")
 }
 
 def lightOn() {
-	parent.componentSet(device, ["H0B": 1])
+	if (!parent.componentSet(device, ["H0B": 1])) return
 	sendEvent(name: "lightSwitch", value: "on", descriptionText: "${device.displayName} light is on")
 }
 
 def lightOff() {
-	parent.componentSet(device, ["H0B": 0])
+	if (!parent.componentSet(device, ["H0B": 0])) return
 	sendEvent(name: "lightSwitch", value: "off", descriptionText: "${device.displayName} light is off")
 }
 
 def setLightLevel(def level) {
 	def pct = clamp(level as Integer, 1, 100)
-	parent.componentSet(device, ["H0B": 1, "H0C": pct])
+	if (!parent.componentSet(device, ["H0B": 1, "H0C": pct])) return
 	sendEvent(name: "lightLevel", value: pct, unit: "%", descriptionText: "${device.displayName} light level is ${pct}%")
 	sendEvent(name: "lightSwitch", value: "on", descriptionText: "${device.displayName} light is on")
 }
