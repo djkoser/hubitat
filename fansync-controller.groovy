@@ -105,10 +105,16 @@ def httpLoginCallback(response, data) {
 		scheduleReconnect()
 		return
 	}
-	if (response.getStatus() in [401, 403]) {
-		// Bad credentials — retrying would hammer the rate-limited session
-		// endpoint forever. Stop; the user must fix email/password and Save.
-		log.error "FanSync credentials rejected (HTTP ${response.getStatus()}) — update email/password and Save Preferences"
+	def status = response.getStatus() as Integer
+	if (status >= 400 && status < 500 && status != 408) {
+		// Client error (400 malformed/invalid credentials, 401/403 rejected,
+		// etc.) — the same request will fail the same way, so retrying only
+		// hammers the rate-limited session endpoint forever. Stop; the user
+		// must fix email/password and Save. 408 (timeout) and 429 (handled
+		// above) are transient and still retry.
+		log.error "FanSync login rejected (HTTP ${status}) — check email/password and Save Preferences"
+		unschedule("initialize")
+		state.reconnectDelay = null
 		sendEvent(name: "connectionStatus", value: "disconnected")
 		return
 	}
