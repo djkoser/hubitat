@@ -19,11 +19,13 @@ This repository is designed to:
 ## Current Applications
 
 - **Enhanced Battery Monitor** - Advanced battery monitoring application with configurable thresholds and intelligent notifications that sends alerts when devices cross battery level boundaries (high→medium→low)
+- **ERV Auto Controller** - Runs an ERV and air handler as On / Recirculate / Off from indoor and outdoor air quality (CO2, VOC, NOx, PM2.5), with hysteresis, minimum dwell and a stale-sensor fail-safe. All thresholds are hub variables
 
 ## Current Drivers
 
 - **FanSync Controller / FanSync Fan** - Parent/child cloud drivers for Fanimation FanSync fans (speed, direction, light)
 - **Virtual Security Keypad** - Bridges HSM arm states to Google Home
+- **AirGradient Local** - Polls AirGradient ONE / Open Air monitors over the local API and reports corrected PM2.5, temperature and humidity; can set the recommended corrections on the monitor
 - **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 5-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press)
 
 ## Installation

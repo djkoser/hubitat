@@ -1,11 +1,11 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
-  "dateReleased": "2026-11-23",
+  "dateReleased": "2026-11-24",
   "category": "Convenience",
   "tags": [
     "Climate Control",
@@ -20,6 +20,14 @@
       "name": "Enhanced Battery Monitor",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/battery-monitor.groovy",
+      "required": false,
+      "oauth": false
+    },
+    {
+      "id": "27d10859-35d3-45ac-815c-d5ca4eec8ccf",
+      "name": "ERV Auto Controller",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-auto-controller.groovy",
       "required": false,
       "oauth": false
     }
@@ -51,6 +59,13 @@
       "name": "IKEA Tradfri Remote Control (E1810) - Power Hold",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/ikea-e1810-power-hold.groovy",
+      "required": false
+    },
+    {
+      "id": "fbab1a7a-e5bb-4d03-afb7-510344748b3b",
+      "name": "AirGradient Local",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/airgradient-local.groovy",
       "required": false
     }
   ]
