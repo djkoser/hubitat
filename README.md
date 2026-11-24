@@ -25,7 +25,6 @@ This repository is designed to:
 ## Current Drivers
 
 - **FanSync Controller / FanSync Fan** - Parent/child cloud drivers for Fanimation FanSync fans (speed, direction, light)
-- **Virtual Security Keypad** - Bridges HSM arm states to Google Home
 - **AirGradient Local** - Polls AirGradient ONE / Open Air monitors over the local API and reports corrected PM2.5, temperature and humidity; can set the recommended corrections on the monitor
 - **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 5-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press)
 
