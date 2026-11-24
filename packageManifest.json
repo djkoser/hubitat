@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -44,6 +44,13 @@
       "name": "Virtual Security Keypad",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/virtual-security-keypad.groovy",
+      "required": false
+    },
+    {
+      "id": "ddbe6090-23aa-4977-9312-8a3670f9b619",
+      "name": "IKEA Tradfri Remote Control (E1810) - Power Hold",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/ikea-e1810-power-hold.groovy",
       "required": false
     }
   ]

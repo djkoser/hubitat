@@ -20,6 +20,12 @@ This repository is designed to:
 
 - **Enhanced Battery Monitor** - Advanced battery monitoring application with configurable thresholds and intelligent notifications that sends alerts when devices cross battery level boundaries (high→medium→low)
 
+## Current Drivers
+
+- **FanSync Controller / FanSync Fan** - Parent/child cloud drivers for Fanimation FanSync fans (speed, direction, light)
+- **Virtual Security Keypad** - Bridges HSM arm states to Google Home
+- **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 5-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press)
+
 ## Installation
 
 Applications in this repository can be installed via:
