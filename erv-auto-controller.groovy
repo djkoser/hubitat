@@ -17,7 +17,11 @@
  *   3. Indoor CO2/VOC/NOx high             -> On, or Recirculate if outdoor VOC/NOx is high
  *   4. Indoor PM2.5 high                   -> On if outdoor PM2.5 is fine and lower than
  *                                             indoor by the margin, else Recirculate
- *   5. Everything good                     -> idle state (default Off)
+ *   5. Everything good                     -> idle state (default Off), except that the
+ *                                             ERV is forced On late in each clock hour if it
+ *                                             has not yet run the minimum ventilation minutes
+ *                                             (ASHRAE 62.2: sensors add ventilation, they do not
+ *                                             replace the continuous whole-house rate)
  * Each "high" flag has hysteresis: it trips at the threshold and clears only once the
  * value drops below threshold minus its buffer. A state is held for a minimum dwell
  * time before it may change (except for fail-safe and critical CO2).
@@ -57,6 +61,7 @@ preferences { page(name: "mainPage") }
 	ervAutoOutdoorGasBuffer:   ["Number", 25,   "Outdoor VOC/NOx hysteresis"],
 	ervAutoMinDwellMinutes:    ["Number", 15,   "Minimum minutes a state is held before changing"],
 	ervAutoStaleMinutes:       ["Number", 15,   "Minutes without a sensor update before fail-safe"],
+	ervAutoMinVentMinutesPerHour: ["Number", 20, "Minimum ERV run minutes per clock hour (ASHRAE 62.2 continuous-rate equivalent; 0 = disabled)"],
 	ervAutoIdleState:          ["String", "Off", "State when air is good: Off, Recirculate or On"],
 	ervAutoFailSafeState:      ["String", "On",  "State when a sensor is offline: On, Recirculate or Off"],
 ]
@@ -143,6 +148,7 @@ def evaluate() {
 
 	def p = PARAMS.collectEntries { n, d -> [(n): param(n)] }
 	def f = state.flags ?: [:]
+	accountVentilation()
 
 	def inCo2 = val(indoor, "carbonDioxide")
 	def inVoc = val(indoor, "vocIndex")
@@ -191,6 +197,18 @@ def evaluate() {
 	} else {
 		target = stateParam(p.ervAutoIdleState, "Off")
 		reason = "air good"
+		// Minimum ventilation duty: if the remaining minutes this hour are no more than the
+		// ventilation still owed, run now (deadline scheduling, so sensor-driven runs count).
+		def needMin = (p.ervAutoMinVentMinutesPerHour as BigDecimal).min(60)
+		if (target != "On" && needMin > 0) {
+			def owedMin = needMin - ((state.ventMs ?: 0) as BigDecimal) / 60000
+			def cal = Calendar.getInstance(location.timeZone)
+			def leftMin = 60 - cal.get(Calendar.MINUTE) - cal.get(Calendar.SECOND) / 60
+			if (owedMin > 0 && leftMin <= owedMin + 1) {
+				target = "On"; urgent = true
+				reason = "minimum ventilation (${needMin - owedMin.setScale(0, BigDecimal.ROUND_UP)} of ${needMin} min this hour)"
+			}
+		}
 	}
 
 	def current = state.current
@@ -237,6 +255,23 @@ private void publish(String s, String reason) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// Accumulates ERV run time (relay-confirmed) within the current clock hour.
+private void accountVentilation() {
+	def hourKey = new Date().format("yyyyMMddHH", location.timeZone)
+	def t = now()
+	if (state.ventHour != hourKey) {
+		state.ventHour = hourKey
+		state.ventMs = 0
+		state.ventTick = t
+		return
+	}
+	def last = (state.ventTick ?: t) as Long
+	if (ervStopRelay.currentValue("switch") == "off") {   // relay off = ERV running
+		state.ventMs = ((state.ventMs ?: 0) as Long) + Math.min(t - last, 120000L)   // cap gaps (hub restarts)
+	}
+	state.ventTick = t
+}
 
 // Trips at >= high, clears at <= high - buffer, otherwise keeps the previous value.
 // Unknown readings (sensor absent) count as "not bad".
