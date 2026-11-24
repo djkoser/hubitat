@@ -460,7 +460,7 @@ def reconnect() {
 }
 
 def refresh() {
-	def ids = (state.deviceNames ?: [:]).keySet() as Set
+	Set ids = new HashSet((state.deviceNames ?: [:]).keySet())
 	getChildDevices().each { def d = it.getDataValue("fansyncId"); if (d) ids << d }
 	ids.each { pollDevice(it) }
 }
