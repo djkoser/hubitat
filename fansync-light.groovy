@@ -125,6 +125,9 @@ void parseStatus(Map status) {
 	if (lk && status[lk] != null) {
 		def pct = status[lk] as Integer
 		if (pct > 0) sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${dn} level is ${pct}%")
+		// The cloud reports 0 for a light that has never been dimmed (it runs at full brightness).
+		// A dimmer needs a level value (Google Home rejects one without it), so record 100.
+		else if (device.currentValue("level") == null) sendEvent(name: "level", value: 100, unit: "%", descriptionText: "${dn} level is 100% (never dimmed)")
 	}
 	if (ck && status[ck] != null) {
 		def k = status[ck] as Integer
