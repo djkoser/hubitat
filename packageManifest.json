@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.12.1",
+  "version": "1.13.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -36,6 +36,14 @@
       "name": "Safety Monitor",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/safety-monitor.groovy",
+      "required": false,
+      "oauth": false
+    },
+    {
+      "id": "3bcdfbf0-efb4-41e4-9114-7721166f8917",
+      "name": "Bathroom Humidity Fan",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/bathroom-humidity-fan.groovy",
       "required": false,
       "oauth": false
     }
