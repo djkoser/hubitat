@@ -16,6 +16,9 @@
  *   - Water leak closes the main shutoff valve when one is configured.
  *   - Clearing events are texted too.
  *
+ * Active alerts (intrusion, smoke, CO, leak) are re-announced every safetyRepeatSeconds,
+ * safetyRepeatCount times (0 = until cleared). The cancel switch acknowledges all of them.
+ *
  * Device health
  *   - Any monitored device that reports offline, or has been silent for
  *     safetySensorStaleHours, is texted once (and again when it recovers).
@@ -46,6 +49,8 @@ preferences { page(name: "mainPage") }
 	safetyArmReminderTime:  ["String", "22:00", "Time (HH:mm) to announce if not armed; blank = off"],
 	safetySensorStaleHours: ["Number", 26,      "Hours of silence before a device is reported offline"],
 	ttsStopDelay:           ["Number", 10,      "Seconds before speakers are stopped after an announcement"],
+	safetyRepeatSeconds:    ["Number", 30,      "Seconds between repeated alert announcements; 0 = announce once"],
+	safetyRepeatCount:      ["Number", 10,      "Times an active alert is repeated; 0 = until cancelled or cleared"],
 ]
 @groovy.transform.Field static final List OUTPUTS = ["intrusionMonitoringEnabled", "safetyStatus"]
 
@@ -76,6 +81,7 @@ def mainPage() {
 				paragraph "<b>Intrusion:</b> ${state.armed ? 'ARMED' : 'disarmed'}${state.alertActive ? ' — <span style=\"color:#c00\">ALERT ACTIVE</span>' : ''}<br>" +
 						  "<b>Unlocked:</b> ${unlockedNames() ?: 'none'}<br>" +
 						  "<b>Open doors:</b> ${openDoorNames() ?: 'none'}<br>" +
+						  "<b>Repeating alerts:</b> ${(state.activeAlerts ?: [:]).values().join(' ') ?: 'none'}<br>" +
 						  "<b>Unhealthy devices:</b> ${(state.unhealthy ?: [:]).values().join(', ') ?: 'none'}"
 			}
 		}
@@ -162,7 +168,7 @@ def doorOpenHandler(evt) {
 	log.warn msg
 	state.alertActive = true
 	notify(msg)
-	speak("Alert. ${evt.displayName} opened while armed.")
+	startAlert("intrusion", "Alert. ${evt.displayName} opened while armed.")
 	cameraSpotlights(true)
 	cameraSirens(true)
 	publishStatus()
@@ -171,6 +177,7 @@ def doorOpenHandler(evt) {
 def cancelHandler(evt) {
 	log.info "Active alerts cancelled by ${evt.displayName}"
 	stopAlert()
+	clearAllAlerts()   // acknowledges environmental alerts too: their announcements stop repeating
 }
 
 private void stopAlert() {
@@ -179,6 +186,7 @@ private void stopAlert() {
 		cameraSirens(false)
 	}
 	state.alertActive = false
+	clearAlert("intrusion")
 	publishStatus()
 }
 
@@ -205,13 +213,15 @@ private void scheduleReminder() {
 // ── Environmental ────────────────────────────────────────────────────────────
 
 def smokeHandler(evt) {
-	if (evt.value == "detected") alarm("Smoke detected by ${evt.displayName}")
-	else if (evt.value == "clear") notify("Smoke cleared at ${evt.displayName} (${nowText()}).")
+	def key = "smoke:${evt.deviceId}"
+	if (evt.value == "detected") alarm(key, "Smoke detected by ${evt.displayName}")
+	else if (evt.value == "clear") { clearAlert(key); notify("Smoke cleared at ${evt.displayName} (${nowText()}).") }
 }
 
 def coHandler(evt) {
-	if (evt.value == "detected") alarm("Carbon monoxide detected by ${evt.displayName}. Get everyone outside")
-	else if (evt.value == "clear") notify("Carbon monoxide cleared at ${evt.displayName} (${nowText()}).")
+	def key = "co:${evt.deviceId}"
+	if (evt.value == "detected") alarm(key, "Carbon monoxide detected by ${evt.displayName}. Get everyone outside")
+	else if (evt.value == "clear") { clearAlert(key); notify("Carbon monoxide cleared at ${evt.displayName} (${nowText()}).") }
 }
 
 def leakHandler(evt) {
@@ -221,17 +231,58 @@ def leakHandler(evt) {
 			waterValve.close()
 			valveText = " The main water valve is being closed."
 		}
-		alarm("Water leak detected by ${evt.displayName}.${valveText}")
+		alarm("leak:${evt.deviceId}", "Water leak detected by ${evt.displayName}.${valveText}")
 	} else if (evt.value == "dry") {
+		clearAlert("leak:${evt.deviceId}")
 		notify("${evt.displayName} is dry again (${nowText()}).${waterValve ? " The main water valve stays closed until you reopen it." : ''}")
 	}
 }
 
-private void alarm(String text) {
+private void alarm(String key, String text) {
 	def t = text.endsWith(".") ? text : text + "."
 	log.warn t
 	notify("${t} (${nowText()})")
-	speak(t)
+	startAlert(key, t)
+}
+
+// ── Repeating announcements (like HSM) ───────────────────────────────────────
+// Each active alert is announced now and re-announced every safetyRepeatSeconds,
+// safetyRepeatCount times (0 = until it is cleared, cancelled or the house disarms).
+
+private void startAlert(String key, String text) {
+	def active = state.activeAlerts ?: [:]
+	active[key] = text
+	state.activeAlerts = active
+	state.repeatsLeft = (param("safetyRepeatCount") as BigDecimal) as Integer
+	speak(text)
+	scheduleRepeat()
+}
+
+private void clearAlert(String key) {
+	def active = state.activeAlerts ?: [:]
+	if (active.remove(key) != null) state.activeAlerts = active
+	if (!active) unschedule("repeatAlerts")
+}
+
+private void clearAllAlerts() {
+	state.activeAlerts = [:]
+	unschedule("repeatAlerts")
+}
+
+private void scheduleRepeat() {
+	def secs = (param("safetyRepeatSeconds") as BigDecimal) as Integer
+	if (secs > 0) runIn(Math.max(secs, 10), "repeatAlerts", [overwrite: true])
+}
+
+def repeatAlerts() {
+	def active = state.activeAlerts ?: [:]
+	if (!active) return
+	def total = (param("safetyRepeatCount") as BigDecimal) as Integer
+	def left = (state.repeatsLeft ?: 0) as Integer
+	if (total > 0 && left <= 0) return
+	speak(active.values().join(" "))
+	if (total > 0) state.repeatsLeft = left - 1
+	if (total == 0 || left - 1 > 0) scheduleRepeat()
 }
 
 // ── Device health ────────────────────────────────────────────────────────────
