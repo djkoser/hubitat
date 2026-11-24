@@ -9,6 +9,7 @@
  *   - While armed, any door opening alerts: text + announcement + camera spotlights + sirens.
  *   - Camera email alerts are enabled while armed and disabled while disarmed.
  *   - The "cancel" switch (or disarming) stops spotlights and sirens.
+ *   - An optional sirens switch (e.g. exposed to Google) sounds/stops every camera siren.
  *   - At safetyArmReminderTime, if the house isn't armed, announces what is unlocked/open.
  *
  * Environmental monitoring (always on)
@@ -24,9 +25,12 @@
  *     safetySensorStaleHours, is texted once (and again when it recovers).
  *
  * Tunables are hub variables (Settings > Hub Variables); a missing one falls back to its
- * default and is flagged on the app page. Cameras are driven through the Reolink NVR API
- * using the existing hub variables nvrIpAddress / reolinkUsername / reolinkPassword and
- * per-camera channel variables.
+ * default and is flagged on the app page.
+ *
+ * Spotlights and sirens use the camera devices from Hubitat's built-in Reolink Integration
+ * (setSpotlight / setSiren). Camera email alerts are not exposed by that integration, so they
+ * are set directly on the NVR over HTTPS with a token login, using hub variables
+ * nvrIpAddress / reolinkUsername / reolinkPassword and the per-camera channel variables.
  */
 
 import groovy.json.JsonOutput
@@ -71,8 +75,10 @@ def mainPage() {
 			input "notifiers", "capability.notification", title: "Text these", multiple: true, required: true
 			input "speakers", "capability.speechSynthesis", title: "Announce on these", multiple: true, required: false
 		}
-		section("Cameras (Reolink NVR)") {
+		section("Cameras (Reolink)") {
 			input "camerasEnabled", "bool", title: "Use cameras (spotlights, sirens, email alerts)", defaultValue: true
+			input "cameras", "capability.motionSensor", title: "Reolink cameras (spotlight + siren when a door opens while armed)", multiple: true, required: false
+			input "sirenSwitch", "capability.switch", title: "Sirens switch (on/off sounds or stops every camera siren)", required: false
 			input "cameraChannelVars", "text", title: "Hub variables holding camera channel numbers (comma-separated)",
 				  defaultValue: "drivewayCameraChannel,southCameraChannel,southeastCameraChannel,northeastCameraChannel,northwestCameraChannel"
 		}
@@ -101,7 +107,7 @@ def mainPage() {
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 def installed() { initialize() }
-def updated()   { unsubscribe(); unschedule(); state.remove("reolinkAuthFailed"); initialize() }
+def updated()   { unsubscribe(); unschedule(); state.remove("reolinkAuthFailed"); state.remove("reolinkToken"); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
 def initialize() {
@@ -114,6 +120,7 @@ def initialize() {
 	subscribe(locks, "lock", "lockHandler")
 	subscribe(doors, "contact.open", "doorOpenHandler")
 	if (cancelSwitch) subscribe(cancelSwitch, "switch.on", "cancelHandler")
+	if (sirenSwitch) subscribe(sirenSwitch, "switch", "sirenSwitchHandler")
 	if (smokeDetectors) subscribe(smokeDetectors, "smoke", "smokeHandler")
 	if (coDetectors) subscribe(coDetectors, "carbonMonoxide", "coHandler")
 	if (leakSensors) subscribe(leakSensors, "water", "leakHandler")
@@ -180,11 +187,17 @@ def cancelHandler(evt) {
 	clearAllAlerts()   // acknowledges environmental alerts too: their announcements stop repeating
 }
 
+def sirenSwitchHandler(evt) {
+	log.info "Sirens turned ${evt.value} by ${evt.displayName}"
+	cameraSirens(evt.value == "on")
+}
+
 private void stopAlert() {
 	if (state.alertActive) {
 		cameraSpotlights(false)
 		cameraSirens(false)
 	}
+	if (sirenSwitch?.currentValue("switch") == "on") sirenSwitch.off()
 	state.alertActive = false
 	clearAlert("intrusion")
 	publishStatus()
@@ -318,21 +331,25 @@ private List allMonitored() {
 	return all.unique { it.id }
 }
 
-// ── Cameras (Reolink NVR API) ────────────────────────────────────────────────
+// ── Cameras ──────────────────────────────────────────────────────────────────
 
+private void cameraSpotlights(boolean on) {
+	if (camerasEnabled == false) return
+	cameras?.each { if (it.hasCommand("setSpotlight")) it.setSpotlight(on ? "on" : "off") }
+}
+
+private void cameraSirens(boolean on) {
+	if (camerasEnabled == false) return
+	cameras?.each { if (it.hasCommand("setSiren")) it.setSiren(on ? "on" : "off") }
+}
+
+// Email alert schedule (AI people/vehicle on while armed). Not in the Reolink Integration,
+// so it goes straight to the NVR: HTTPS, token login, all channels in one batch request.
 private void cameraEmailAlerts(boolean on) {
 	def table = on ? "1" * 168 : "0" * 168
 	def off = "0" * 168
 	reolink(channels().collect { ch -> [cmd: "SetEmailV20", param: [Email: [schedule: [channel: ch, table: [
 		AI_PEOPLE: table, AI_VEHICLE: table, AI_DOG_CAT: off, MD: off]]]]] })
-}
-
-private void cameraSpotlights(boolean on) {
-	reolink(channels().collect { ch -> [cmd: "SetWhiteLed", param: [WhiteLed: (on ? [state: 1, channel: ch, bright: 100] : [state: 0, channel: ch])]] })
-}
-
-private void cameraSirens(boolean on) {
-	reolink(channels().collect { ch -> [cmd: "AudioAlarmPlay", action: 0, param: [alarm_mode: "manul", manual_switch: on ? 1 : 0, times: 1, channel: ch]] })
 }
 
 private List channels() {
@@ -349,44 +366,62 @@ private List channelVarNames() {
 	(cameraChannelVars ?: "").split(",").collect { it.trim() }.findAll { it }
 }
 
-// All channels go in one batch request = one login attempt per action.
-// The NVR locks the account after repeated failed logins, so after one failure
-// camera calls stop until the app is saved again.
+// The NVR locks the account after repeated failed logins, so after one failed login
+// NVR calls stop until the app is saved again.
 private void reolink(List commands) {
 	if (!commands) return
-	if (state.reolinkAuthFailed) { log.warn "Reolink calls paused after a failed login; fix the credentials and click Done in the app"; return }
-	def ip = getGlobalVar("nvrIpAddress")?.value
-	def user = getGlobalVar("reolinkUsername")?.value
-	def pass = getGlobalVar("reolinkPassword")?.value
-	if (!ip || !user || pass == null) { log.warn "Reolink NVR hub variables are not set"; return }
-	def cmd = commands[0].cmd
-	if (logEnable) log.debug "Reolink ${cmd} x${commands.size()}"
-	try {
-		// Credentials go in raw: the NVR does not URL-decode them (same as Rule Machine's request)
-		asynchttpPost("reolinkResponse", [uri: "http://${ip}/api.cgi?user=${user}&password=${pass}",
-										  requestContentType: "application/json", contentType: "application/json",
-										  body: JsonOutput.toJson(commands), timeout: 15], [cmd: cmd])
-	} catch (e) {
-		log.warn "Reolink ${cmd} request could not be built: ${e.class.simpleName}"
-	}
+	if (state.reolinkAuthFailed) { log.warn "NVR calls paused after a failed login; fix the credentials and click Done in the app"; return }
+	if (!getGlobalVar("nvrIpAddress")?.value) { log.warn "Hub variable nvrIpAddress is not set"; return }
+	def body = JsonOutput.toJson(commands)
+	if (state.reolinkToken && now() < ((state.reolinkTokenExpires ?: 0) as Long)) sendNvr(body, false)
+	else nvrLogin(body)
 }
 
-def reolinkResponse(resp, data) {
-	if (resp.hasError() || resp.status != 200) {
-		log.warn "Reolink ${data?.cmd} failed (${resp.status})"
+private void nvrLogin(String pendingBody, boolean retried = false) {
+	def user = getGlobalVar("reolinkUsername")?.value
+	def pass = getGlobalVar("reolinkPassword")?.value
+	if (!user || pass == null) { log.warn "Hub variables reolinkUsername / reolinkPassword are not set"; return }
+	asynchttpPost("nvrLoginResponse", [uri: "https://${getGlobalVar('nvrIpAddress').value}/cgi-bin/api.cgi?cmd=Login",
+		ignoreSSLIssues: true, requestContentType: "application/json", contentType: "application/json", timeout: 15,
+		body: JsonOutput.toJson([[cmd: "Login", param: [User: [Version: "0", userName: user, password: pass]]]])],
+		[body: pendingBody, retried: retried])
+}
+
+def nvrLoginResponse(resp, data) {
+	if (resp.hasError() || resp.status != 200) { log.warn "NVR login request failed (${resp.status})"; return }
+	def r
+	try { r = resp.json; r = (r instanceof List) ? r[0] : r } catch (e) { return }
+	def token = r?.value?.Token
+	if (r?.code != 0 || !token?.name) {
+		state.reolinkAuthFailed = true
+		log.error "NVR login failed (${r?.error?.detail ?: r?.code}); NVR calls paused until the app is saved again"
 		return
 	}
+	state.reolinkToken = token.name
+	state.reolinkTokenExpires = now() + (((token.leaseTime ?: 3600) as Long) - 60) * 1000
+	sendNvr(data.body, data.retried ?: false)
+}
+
+private void sendNvr(String body, boolean retried) {
+	asynchttpPost("nvrResponse", [uri: "https://${getGlobalVar('nvrIpAddress').value}/cgi-bin/api.cgi?token=${state.reolinkToken}",
+		ignoreSSLIssues: true, requestContentType: "application/json", contentType: "application/json", timeout: 15,
+		body: body], [body: body, retried: retried])
+}
+
+def nvrResponse(resp, data) {
+	if (resp.hasError() || resp.status != 200) { log.warn "NVR request failed (${resp.status})"; return }
 	def j
 	try { j = resp.json } catch (e) { return }
 	def results = (j instanceof List) ? j : [j]
-	if (results.any { it?.error?.rspCode == -7 || it?.error?.detail == "login failed" }) {
-		state.reolinkAuthFailed = true
-		log.error "Reolink login failed; camera control paused until the app is saved again"
+	// -6 = token expired/invalid: log in again once
+	if (!data.retried && results.any { it?.error?.rspCode == -6 }) {
+		state.remove("reolinkToken")
+		nvrLogin(data.body, true)
 		return
 	}
 	def bad = results.findAll { it?.code != 0 }
-	if (bad) log.warn "Reolink ${data?.cmd}: ${bad.size()} of ${results.size()} failed: ${bad[0]}"
-	else if (logEnable) log.debug "Reolink ${data?.cmd} ok x${results.size()}"
+	if (bad) log.warn "NVR: ${bad.size()} of ${results.size()} commands failed: ${bad[0]}"
+	else if (logEnable) log.debug "NVR ok x${results.size()}"
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
