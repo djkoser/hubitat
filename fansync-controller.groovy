@@ -360,8 +360,12 @@ private ensureChildren(String did, Map data) {
 // ranges and "before" rules, UI components with preset values, and error codes.
 // It is reduced to a small per-model summary and cached in state for a day.
 
+@groovy.transform.Field static final Integer INFO_MODEL_FORMAT = 2
+
 private fetchInfoModel() {
-	if (state.infoModel && state.infoModelAt && now() - (state.infoModelAt as Long) < 86400000L) return
+	// Bump INFO_MODEL_FORMAT whenever the cached summary gains fields, so it is rebuilt immediately
+	if (state.infoModel && state.infoModelFormat == INFO_MODEL_FORMAT && state.infoModelAt &&
+		now() - (state.infoModelAt as Long) < 86400000L) return
 	asynchttpGet("infoModelResponse", [uri: "https://fanimation.apps.exosite.io", path: "/api:1/info-model",
 									   contentType: "text/plain", timeout: 30])
 }
@@ -397,6 +401,7 @@ def infoModelResponse(response, data) {
 	}
 	state.infoModel = summary
 	state.infoModelAt = now()
+	state.infoModelFormat = INFO_MODEL_FORMAT
 	log.info "FanSync: loaded Fanimation information model (${summary.size()} models)"
 	if (state.phase == "ready") refresh()   // reconfigure children from the spec
 }
