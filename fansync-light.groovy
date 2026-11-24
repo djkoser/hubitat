@@ -1,19 +1,17 @@
 /**
  * FanSync Light — Hubitat Child Driver
  *
- * Child of "FanSync Controller". One per FanSync device that has a light:
- *   - the light kit on a ceiling fan (keys H0B power, H0C brightness, H04 color temp)
- *   - a standalone FanSync light (keys H00 power, H02 brightness)
+ * Child of "FanSync Controller". One per light on a FanSync device:
+ *   - a fan's light kit: LIGHT (H0B power, H0C brightness)
+ *   - the second light on dual-light fans: LIGHT2 (H09 power, H0A brightness)
+ *   - a standalone FanSync light (H00 power, H02 brightness)
+ * Color temperature (H04) is shared by both lights of a dual-light fan.
  *
- * The controller reads each device's model and supported fields from the cloud
- * and stores the key map in this device's data values (powerKey, levelKey, cctKey),
- * so the same driver handles on/off-only, dimmable and color-temperature lights.
- *
- * Key behavior follows Fanimation's information model (the device data model their
- * cloud serves at /api:1/info-model): brightness and color temperature are 1-100 and
- * 3000-5000 K, and each carries a "before" rule that the light must be switched on.
- * The app offers three color temperatures (Warm 3000, Natural 4000, Cool 5000), so
- * requested values snap to the nearest of those.
+ * The controller configures this device from Fanimation's information model
+ * (/api:1/info-model) and stores it in data values: powerKey, levelKey, cctKey,
+ * cctMin, cctMax, cctPresets. Every brightness/color change also sends power=1,
+ * per the model's "before" rules. Color temperature snaps to the model's presets
+ * (e.g. 2700/3000/3500/4000/5000 K) when it defines them, otherwise clamps to its range.
  */
 
 metadata {
@@ -37,8 +35,6 @@ metadata {
 		input "logEnable", "bool", title: "Enable debug logging", defaultValue: false
 	}
 }
-
-@groovy.transform.Field static final List CCT_PRESETS = [3000, 4000, 5000]
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -144,7 +140,7 @@ void parseStatus(Map status) {
 void configureFeatures() {
 	def f = ["on/off"]
 	if (levelKey()) f << "dimming"
-	if (cctKey())   f << "color temperature"
+	if (cctKey())   f << "color temperature ${cctMin()}-${cctMax()}K" + (cctPresets() ? " (${cctPresets().join('/')})" : "")
 	sendEvent(name: "lightFeatures", value: f.join(", "))
 }
 
@@ -156,10 +152,19 @@ private String powerKey() { getDataValue("powerKey") ?: "H0B" }
 private String levelKey() { getDataValue("levelKey") ?: null }
 private String cctKey()   { getDataValue("cctKey") ?: null }
 
-private int snapCct(int k) { CCT_PRESETS.min { Math.abs(it - k) } as int }
+private int cctMin() { (getDataValue("cctMin") ?: "2700") as Integer }
+private int cctMax() { (getDataValue("cctMax") ?: "5000") as Integer }
+private List cctPresets() { (getDataValue("cctPresets") ?: "").split(",").findAll { it }.collect { it as Integer } }
+
+private int snapCct(int k) {
+	def p = cctPresets()
+	if (p) return p.min { Math.abs(it - k) } as int
+	return clamp(k, cctMin(), cctMax())
+}
 
 private void sendCct(int k) {
-	def name = k <= 3500 ? "Warm White" : k <= 4500 ? "Neutral White" : "Cool White"
+	// Fanimation's preset names: 2700 Warm White, 3000 Soft White, 3500 Bright White, 4000 Cool White, 5000 Daylight
+	def name = k < 2850 ? "Warm White" : k < 3250 ? "Soft White" : k < 3750 ? "Bright White" : k < 4500 ? "Cool White" : "Daylight"
 	sendEvent(name: "colorTemperature", value: k, unit: "°K", descriptionText: "${device.displayName} color temperature is ${k}K")
 	sendEvent(name: "colorName", value: name)
 }

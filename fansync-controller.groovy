@@ -19,12 +19,14 @@
  *   Device spec: https://fanimation.apps.exosite.io/api:1/info-model (Fanimation's information
  *                model: per-model traits, key ranges, "before" rules and error codes)
  *
- * Each "get" response carries the device's model (data.profile.esh.model, e.g. "...-FDR1L3")
- * and the keys it supports (data.fields). The model suffix follows the information model:
- *   fans:  FDR/FAR/UAR + L0 (no light) / L1 (on/off) / L2 (dimmable) / L3 (dimmable + color temp)
- *   lights: L1 (on/off) / L2 (dimmable), with power/brightness on H00/H02
- * From that the controller creates a "FanSync Fan" child for fans and a "FanSync Light" child
- * for any light (fan light kit or standalone light), and routes status to both.
+ * Each "get" response carries the device's model (data.profile.esh.model, e.g.
+ * "TorchAire52-FD6R1LD5") and the keys it supports (data.fields). The controller loads the
+ * information model (public, cached a day), matches the model against each entry's
+ * familyMembers patterns, and builds the children from that entry:
+ *   - a "FanSync Fan" for FAN-* entries, with the model's fixed speed presets if it has them
+ *   - a "FanSync Light" per light trait (LIGHT = H0B/H0C, LIGHT2 = H09/H0A on dual-light
+ *     models, H00/H02 on standalone lights), with the color temperature range and presets
+ * If the information model can't be loaded, the model suffix and reported fields are used.
  */
 
 import groovy.json.JsonSlurper
@@ -86,6 +88,7 @@ def initialize() {
 		return
 	}
 	sendEvent(name: "connectionStatus", value: "connecting")
+	fetchInfoModel()
 	if (state.token && !tokenExpired()) {
 		// Reuse the cached token — the session endpoint rate-limits (HTTP 429),
 		// so only log in over HTTP when we don't have a live token.
@@ -270,24 +273,19 @@ private Map extractStatus(Map json) {
 }
 
 private routeStatus(String did, Map status) {
-	def fan = getChildDevice(childDni(did))
-	def light = getChildDevice(lightDni(did))
-	if (!fan && !light) {
+	def prefix = childDni(did)
+	def kids = getChildDevices().findAll { it.deviceNetworkId == prefix || it.deviceNetworkId.startsWith(prefix + "-") }
+	if (!kids) {
 		if (logEnable) log.debug "Status for unknown device ${did} — run discoverDevices"
 		return
 	}
-	fan?.parseStatus(status)
-	light?.parseStatus(status)
+	kids.each { it.parseStatus(status) }
 }
 
 // ── Child Management ──────────────────────────────────────────────────────────
 
 private String childDni(String did) {
 	return "fansync-${did}"
-}
-
-private String lightDni(String did) {
-	return "fansync-${did}-light"
 }
 
 // The device list has names but no model, so children are created on each device's
@@ -308,15 +306,11 @@ private ensureChildren(String did, Map data) {
 	String model = data?.profile?.esh?.model ?: ""
 	List fields = (data?.fields instanceof List) ? data.fields.collect { it as String } : []
 	String label = state.deviceNames?.get(did) ?: "FanSync ${did.takeRight(6)}"
-	// Suffix per the information model: "-FDR1L3", "-FAR1L2", "-UAR1L3" (fans) or "-L2" (lights)
-	def mFan   = (model =~ /-(?:FDR|FAR|UAR)\d*L(\d)$/)
-	def mLight = (model =~ /-L(\d)$/)
-	boolean isFan = mFan.find()
-	boolean standalone = !isFan && mLight.find()
-	int lightClass = standalone ? (mLight.group(1) as Integer) : (isFan ? (mFan.group(1) as Integer) : -1)
+	def spec = specFor(model) ?: guessSpec(model, fields)
+	if (!spec) { log.warn "FanSync: '${label}' model '${model}' is not recognized; creating a fan only"; spec = [fan: true, lights: []] }
 
 	def fan = getChildDevice(childDni(did))
-	if (!standalone) {
+	if (spec.fan) {
 		if (!fan) {
 			fan = addChildDevice("fansync", "FanSync Fan", childDni(did),
 								 [name: "FanSync Fan", label: label, isComponent: false])
@@ -324,30 +318,112 @@ private ensureChildren(String did, Map data) {
 		}
 		fan.updateDataValue("fansyncId", did)
 		if (model) fan.updateDataValue("model", model)
+		if (spec.specName) fan.updateDataValue("infoModel", spec.specName as String)
 		if (fields) fan.updateDataValue("fields", fields.join(","))
+		if (spec.speeds) fan.updateDataValue("speedPresets", spec.speeds.join(","))
+		else fan.removeDataValue("speedPresets")
 	} else if (fan) {
 		log.warn "FanSync: '${label}' is a standalone light (${model}); its 'FanSync Fan' device can be deleted"
 	}
 
-	// Light: standalone L1/L2, or a fan with a light kit (H0B in fields, or model L1-L3)
-	boolean hasLight = standalone || fields.contains("H0B") || lightClass >= 1
-	if (!hasLight) return
-	def keys = standalone ?
-		[powerKey: "H00", levelKey: (lightClass >= 2 || fields.contains("H02")) ? "H02" : null, cctKey: null] :
-		[powerKey: "H0B", levelKey: (lightClass >= 2 || fields.contains("H0C")) ? "H0C" : null,
-		 cctKey: (lightClass >= 3 || fields.contains("H04")) ? "H04" : null]
-	def light = getChildDevice(lightDni(did))
-	if (!light) {
-		def lightLabel = standalone ? label : "${label} Light"
-		light = addChildDevice("fansync", "FanSync Light", lightDni(did),
-							   [name: "FanSync Light", label: lightLabel, isComponent: false])
-		log.info "FanSync: created light '${lightLabel}' (${model ?: 'model unknown'})"
+	spec.lights.eachWithIndex { lt, i ->
+		String suffix = lt.id == "LIGHT" ? "light" : (lt.id as String).toLowerCase()
+		String dni = "fansync-${did}-${suffix}"
+		def light = getChildDevice(dni)
+		if (!light) {
+			String lightLabel = !spec.fan ? label : (lt.id == "LIGHT" ? "${label} Light" : "${label} Light ${(lt.id as String).replaceAll(/\D/, '') ?: i + 1}")
+			light = addChildDevice("fansync", "FanSync Light", dni,
+								   [name: "FanSync Light", label: lightLabel, isComponent: false])
+			log.info "FanSync: created light '${lightLabel}' (${model ?: 'model unknown'}, ${lt.id})"
+		}
+		light.updateDataValue("fansyncId", did)
+		light.updateDataValue("lightId", lt.id as String)
+		light.updateDataValue("standalone", spec.fan ? "false" : "true")
+		if (model) light.updateDataValue("model", model)
+		[powerKey: lt.power, levelKey: lt.level, cctKey: lt.cct, cctMin: lt.cctMin, cctMax: lt.cctMax,
+		 cctPresets: lt.cctPresets ? lt.cctPresets.join(",") : null].each { k, v ->
+			if (v != null) light.updateDataValue(k, v as String) else light.removeDataValue(k)
+		}
+		light.configureFeatures()
 	}
-	light.updateDataValue("fansyncId", did)
-	light.updateDataValue("standalone", standalone ? "true" : "false")
-	if (model) light.updateDataValue("model", model)
-	keys.each { k, v -> if (v) light.updateDataValue(k, v) else light.removeDataValue(k) }
-	light.configureFeatures()
+}
+
+// ── Fanimation information model ─────────────────────────────────────────────
+// GET /api:1/info-model (public) describes every model: traits with their keys,
+// ranges and "before" rules, UI components with preset values, and error codes.
+// It is reduced to a small per-model summary and cached in state for a day.
+
+private fetchInfoModel() {
+	if (state.infoModel && state.infoModelAt && now() - (state.infoModelAt as Long) < 86400000L) return
+	asynchttpGet("infoModelResponse", [uri: "https://fanimation.apps.exosite.io", path: "/api:1/info-model",
+									   contentType: "text/plain", timeout: 30])
+}
+
+def infoModelResponse(response, data) {
+	if (response.hasError() || response.getStatus() != 200) {
+		log.warn "FanSync: could not load Fanimation's information model (HTTP ${response.getStatus()}); using model-name rules"
+		return
+	}
+	def json
+	try { json = new JsonSlurper().parseText(response.getData()) } catch (e) { log.warn "FanSync: information model unreadable: ${e}"; return }
+	def summary = [:]
+	json.each { String name, entry ->
+		def im = entry?.informationModel
+		if (!(im instanceof Map)) return
+		def comps = (im.components instanceof Map) ? im.components : [:]
+		def presetsFor = { String key ->
+			def out = null
+			comps.each { cn, c -> c?.models?.each { m -> if (m?.key == key && m.values instanceof List) out = m.values*.value.collect { it as Integer }.sort() } }
+			return out
+		}
+		def lights = []
+		im.integration?.traits?.each { t ->
+			if (t?.appliedDomain || t?.type != "light") return
+			def a = t.attributes ?: [:]
+			if (!a.on_off?.key) return
+			lights << [id: t.id, power: a.on_off.key, level: a.brightness?.key ?: a.percentage?.key,
+					   cct: a.color_temperature?.key, cctMin: a.color_temperature?.min, cctMax: a.color_temperature?.max,
+					   cctPresets: a.color_temperature?.key ? presetsFor(a.color_temperature.key as String) : null]
+		}
+		summary[name] = [patterns: im.familyMembers ?: [], fan: name.startsWith("FAN"), lights: lights,
+						 speeds: name.startsWith("FAN") ? presetsFor("H02") : null]
+	}
+	state.infoModel = summary
+	state.infoModelAt = now()
+	log.info "FanSync: loaded Fanimation information model (${summary.size()} models)"
+	if (state.phase == "ready") refresh()   // reconfigure children from the spec
+}
+
+private Map specFor(String model) {
+	if (!model || !(state.infoModel instanceof Map)) return null
+	def hit = state.infoModel.find { name, s -> s.patterns.any { p -> (model =~ (p as String)).find() } }
+	return hit ? (hit.value + [specName: hit.key]) : null
+}
+
+// Fallback when the information model is unavailable: model suffix + reported fields
+private Map guessSpec(String model, List fields) {
+	def mFan   = (model =~ /-(?:FDR|FAR|UAR|FD\d?R)\d*L(D?)(\d)$/)
+	def mLight = (model =~ /-L(\d)$/)
+	if (mFan.find()) {
+		def lights = []
+		def cls = mFan.group(2) as Integer
+		if (fields.contains("H0B") || cls >= 1)
+			lights << [id: "LIGHT", power: "H0B", level: (fields.contains("H0C") || cls >= 2) ? "H0C" : null,
+					   cct: (fields.contains("H04") || cls >= 3) ? "H04" : null, cctMin: 2700, cctMax: 5000]
+		if (fields.contains("H09"))
+			lights << [id: "LIGHT2", power: "H09", level: fields.contains("H0A") ? "H0A" : null,
+					   cct: fields.contains("H04") ? "H04" : null, cctMin: 2700, cctMax: 5000]
+		return [fan: true, lights: lights]
+	}
+	if (mLight.find()) {
+		def cls = mLight.group(1) as Integer
+		return [fan: false, lights: [[id: "LIGHT", power: "H00", level: (cls >= 2 || fields.contains("H02")) ? "H02" : null]]]
+	}
+	if (fields.contains("H00") && fields.contains("H02")) {
+		def lights = fields.contains("H0B") ? [[id: "LIGHT", power: "H0B", level: fields.contains("H0C") ? "H0C" : null, cct: fields.contains("H04") ? "H04" : null, cctMin: 2700, cctMax: 5000]] : []
+		return [fan: true, lights: lights]
+	}
+	return null
 }
 
 // Called by child devices — send protocol keys to this child's fan.
