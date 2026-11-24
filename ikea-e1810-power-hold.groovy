@@ -18,7 +18,7 @@ import groovy.transform.Field
 import com.hubitat.zigbee.DataType
 
 @Field static final String DRIVER_NAME = 'IKEA Tradfri Remote Control (E1810) - Power Hold'
-@Field static final String DRIVER_VERSION = '1.0.0'
+@Field static final String DRIVER_VERSION = '1.0.1'
 
 // Fields for capability.HealthCheck
 import groovy.time.TimeCategory
@@ -67,12 +67,9 @@ metadata {
         input(
             name:'helpInfo', type:'hidden',
             title:'''
-            <div style="min-height:55px; background:transparent url('https://codeberg.org/dan-danache/hubitat/media/branch/main/ikea-zigbee-drivers/img/Ikea_E1810.webp') no-repeat left center;background-size:auto 55px;padding-left:60px">
-                IKEA Tradfri Remote Control (E1810) <small>v5.8.1</small><br>
-                <small><div>
-                • <a href="https://codeberg.org/dan-danache/hubitat/src/branch/main/ikea-zigbee-drivers#tradfri-remote-control-e1810" target="_blank">device details</a><br>
-                • <a href="https://community.hubitat.com/t/release-ikea-zigbee-drivers/123853" target="_blank">community page</a><br>
-                </div></small>
+            <div>
+                IKEA Tradfri Remote Control (E1810) - Power Hold <small>v1.0.1</small><br>
+                <small>Buttons: 1 Power, 2 Brighter, 3 Dimmer, 4 Next, 5 Prev. Holding Power reports "held 1", after the normal "pushed 1".</small>
             </div>
             '''
         )
