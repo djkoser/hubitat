@@ -95,7 +95,7 @@ def mainPage() {
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 def installed() { initialize() }
-def updated()   { unsubscribe(); unschedule(); initialize() }
+def updated()   { unsubscribe(); unschedule(); state.remove("reolinkAuthFailed"); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
 def initialize() {
@@ -272,40 +272,52 @@ private List allMonitored() {
 private void cameraEmailAlerts(boolean on) {
 	def table = on ? "1" * 168 : "0" * 168
 	def off = "0" * 168
-	eachChannel { ch -> reolink([cmd: "SetEmailV20", param: [Email: [schedule: [channel: ch, table: [
-		AI_PEOPLE: table, AI_VEHICLE: table, AI_DOG_CAT: off, MD: off]]]]]) }
+	reolink(channels().collect { ch -> [cmd: "SetEmailV20", param: [Email: [schedule: [channel: ch, table: [
+		AI_PEOPLE: table, AI_VEHICLE: table, AI_DOG_CAT: off, MD: off]]]]] })
 }
 
 private void cameraSpotlights(boolean on) {
-	eachChannel { ch -> reolink([cmd: "SetWhiteLed", param: [WhiteLed: (on ? [state: 1, channel: ch, bright: 100] : [state: 0, channel: ch])]]) }
+	reolink(channels().collect { ch -> [cmd: "SetWhiteLed", param: [WhiteLed: (on ? [state: 1, channel: ch, bright: 100] : [state: 0, channel: ch])]] })
 }
 
 private void cameraSirens(boolean on) {
-	eachChannel { ch -> reolink([cmd: "AudioAlarmPlay", action: 0, param: [alarm_mode: "manul", manual_switch: on ? 1 : 0, times: 1, channel: ch]]) }
+	reolink(channels().collect { ch -> [cmd: "AudioAlarmPlay", action: 0, param: [alarm_mode: "manul", manual_switch: on ? 1 : 0, times: 1, channel: ch]] })
 }
 
-private void eachChannel(Closure c) {
-	if (camerasEnabled == false) return
-	channelVarNames().each { n ->
+private List channels() {
+	if (camerasEnabled == false) return []
+	channelVarNames().collect { n ->
 		def gv = getGlobalVar(n)
-		if (gv?.value != null && gv.value.toString().isInteger()) c(gv.value.toString() as Integer)
-		else log.warn "Camera channel variable ${n} is missing or not a number"
-	}
+		if (gv?.value != null && gv.value.toString().isInteger()) return gv.value.toString() as Integer
+		log.warn "Camera channel variable ${n} is missing or not a number"
+		return null
+	}.findAll { it != null }
 }
 
 private List channelVarNames() {
 	(cameraChannelVars ?: "").split(",").collect { it.trim() }.findAll { it }
 }
 
-private void reolink(Map command) {
+// All channels go in one batch request = one login attempt per action.
+// The NVR locks the account after repeated failed logins, so after one failure
+// camera calls stop until the app is saved again.
+private void reolink(List commands) {
+	if (!commands) return
+	if (state.reolinkAuthFailed) { log.warn "Reolink calls paused after a failed login; fix the credentials and click Done in the app"; return }
 	def ip = getGlobalVar("nvrIpAddress")?.value
 	def user = getGlobalVar("reolinkUsername")?.value
 	def pass = getGlobalVar("reolinkPassword")?.value
 	if (!ip || !user || pass == null) { log.warn "Reolink NVR hub variables are not set"; return }
-	if (logEnable) log.debug "Reolink ${command.cmd} ch ${command.param?.channel ?: command.param?.WhiteLed?.channel ?: command.param?.Email?.schedule?.channel}"
-	asynchttpPost("reolinkResponse", [uri: "http://${ip}", path: "/api.cgi", query: [user: user, password: pass],
-									  requestContentType: "application/json", contentType: "application/json",
-									  body: JsonOutput.toJson([command]), timeout: 15], [cmd: command.cmd])
+	def cmd = commands[0].cmd
+	if (logEnable) log.debug "Reolink ${cmd} x${commands.size()}"
+	try {
+		// Credentials go in raw: the NVR does not URL-decode them (same as Rule Machine's request)
+		asynchttpPost("reolinkResponse", [uri: "http://${ip}/api.cgi?user=${user}&password=${pass}",
+										  requestContentType: "application/json", contentType: "application/json",
+										  body: JsonOutput.toJson(commands), timeout: 15], [cmd: cmd])
+	} catch (e) {
+		log.warn "Reolink ${cmd} request could not be built: ${e.class.simpleName}"
+	}
 }
 
 def reolinkResponse(resp, data) {
@@ -315,9 +327,15 @@ def reolinkResponse(resp, data) {
 	}
 	def j
 	try { j = resp.json } catch (e) { return }
-	def r = (j instanceof List) ? j[0] : j
-	if (r?.code != 0) log.warn "Reolink ${data?.cmd} returned ${r}"
-	else if (logEnable) log.debug "Reolink ${data?.cmd} ok"
+	def results = (j instanceof List) ? j : [j]
+	if (results.any { it?.error?.rspCode == -7 || it?.error?.detail == "login failed" }) {
+		state.reolinkAuthFailed = true
+		log.error "Reolink login failed; camera control paused until the app is saved again"
+		return
+	}
+	def bad = results.findAll { it?.code != 0 }
+	if (bad) log.warn "Reolink ${data?.cmd}: ${bad.size()} of ${results.size()} failed: ${bad[0]}"
+	else if (logEnable) log.debug "Reolink ${data?.cmd} ok x${results.size()}"
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
