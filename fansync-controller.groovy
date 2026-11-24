@@ -329,13 +329,20 @@ private ensureChildren(String did, Map data) {
 	spec.lights.eachWithIndex { lt, i ->
 		String suffix = lt.id == "LIGHT" ? "light" : (lt.id as String).toLowerCase()
 		String dni = "fansync-${did}-${suffix}"
+		// Name from the information model ("Down Light", "Up Light"), else "Light" / "Light 2"
+		String genericLabel = lt.id == "LIGHT" ? "${label} Light" : "${label} Light ${(lt.id as String).replaceAll(/\D/, '') ?: i + 1}"
+		String lightLabel = !spec.fan ? label : (lt.name ? "${label} ${lt.name}" : genericLabel)
 		def light = getChildDevice(dni)
 		if (!light) {
-			String lightLabel = !spec.fan ? label : (lt.id == "LIGHT" ? "${label} Light" : "${label} Light ${(lt.id as String).replaceAll(/\D/, '') ?: i + 1}")
 			light = addChildDevice("fansync", "FanSync Light", dni,
 								   [name: "FanSync Light", label: lightLabel, isComponent: false])
 			log.info "FanSync: created light '${lightLabel}' (${model ?: 'model unknown'}, ${lt.id})"
+		} else if (light.label == genericLabel && lightLabel != genericLabel) {
+			// Only relabel our own earlier generic name, never a name the user chose
+			light.setLabel(lightLabel)
+			log.info "FanSync: renamed '${genericLabel}' to '${lightLabel}'"
 		}
+		if (lt.name) light.updateDataValue("lightName", lt.name as String)
 		light.updateDataValue("fansyncId", did)
 		light.updateDataValue("lightId", lt.id as String)
 		light.updateDataValue("standalone", spec.fan ? "false" : "true")
@@ -381,7 +388,7 @@ def infoModelResponse(response, data) {
 			if (t?.appliedDomain || t?.type != "light") return
 			def a = t.attributes ?: [:]
 			if (!a.on_off?.key) return
-			lights << [id: t.id, power: a.on_off.key, level: a.brightness?.key ?: a.percentage?.key,
+			lights << [id: t.id, name: (t.append_name ?: "").trim() ?: null, power: a.on_off.key, level: a.brightness?.key ?: a.percentage?.key,
 					   cct: a.color_temperature?.key, cctMin: a.color_temperature?.min, cctMax: a.color_temperature?.max,
 					   cctPresets: a.color_temperature?.key ? presetsFor(a.color_temperature.key as String) : null]
 		}
