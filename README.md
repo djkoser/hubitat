@@ -19,6 +19,7 @@ This repository is designed to:
 ## Current Applications
 
 - **Enhanced Battery Monitor** - Advanced battery monitoring application with configurable thresholds and intelligent notifications that sends alerts when devices cross battery level boundaries (high→medium→low)
+- **Safety Monitor** - HSM replacement: arms when all locks are locked, disarms on any unlock, alerts (text, announcement, Reolink spotlights/sirens) on doors opened while armed; smoke/CO/leak alerts with main water valve shutoff; offline-device alerts
 - **ERV Auto Controller** - Runs an ERV and air handler as On / Recirculate / Off from indoor and outdoor air quality (CO2, VOC, NOx, PM2.5), with hysteresis, minimum dwell and a stale-sensor fail-safe. All thresholds are hub variables
 
 ## Current Drivers
