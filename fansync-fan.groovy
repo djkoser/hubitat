@@ -20,6 +20,11 @@
  *   H0D Home Shield (0=off, 1=on)
  *   H0E error code (0 = none; 250-269 = fault, see ERRORS)
  *
+ * Speed: when the model's information model lists fixed speed presets (e.g. FD6 fans:
+ * 20/35/50/65/80/100), the controller stores them in the "speedPresets" data value;
+ * levels snap to the nearest preset and the named speeds map to the top five
+ * (the lowest preset also reports as "low"). Otherwise speed is 1-100.
+ *
  * The light has its own "FanSync Light" device (created by the controller when the
  * fan model has a light kit). The light commands below are kept for existing rules.
  */
@@ -93,23 +98,15 @@ def off() {
 
 def setLevel(def level, def duration = null) {
 	if ((level as Integer) <= 0) { off(); return }
-	def pct = clamp(level as Integer, 1, 100)
+	def pct = snapSpeed(clamp(level as Integer, 1, 100))
 	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
 }
 
 def setSpeed(String speed) {
-	def pctMap = [
-		"low"        : 25,
-		"medium-low" : 38,
-		"medium"     : 50,
-		"medium-high": 75,
-		"high"       : 100,
-		"auto"       : 50
-	]
 	if (speed == "off") { off(); return }
 	if (speed == "on")  { setSpeed(state.lastSpeed ?: "medium"); return }
-	def pct = pctMap[speed] ?: 50
+	def pct = speedToPct(speed)
 	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	state.lastSpeed = speed
 	sendEvent(name: "speed", value: speed, descriptionText: "${device.displayName} speed is ${speed}")
@@ -174,7 +171,7 @@ void parseStatus(Map status) {
 	if (status["H02"] != null) {
 		def pct = status["H02"] as Integer
 		sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${dn} level is ${pct}%")
-		def spd = pct <= 0 ? "off" : pct <= 30 ? "low" : pct <= 45 ? "medium-low" : pct <= 60 ? "medium" : pct <= 85 ? "medium-high" : "high"
+		def spd = pctToSpeed(pct)
 		sendEvent(name: "speed", value: spd, descriptionText: "${dn} speed is ${spd}")
 	}
 	if (status["H01"] != null) {
@@ -217,6 +214,37 @@ void parseStatus(Map status) {
 ]
 
 // ── Internal Helpers ──────────────────────────────────────────────────────────
+
+@groovy.transform.Field static final List SPEED_NAMES = ["low", "medium-low", "medium", "medium-high", "high"]
+
+private List speedPresets() {
+	(getDataValue("speedPresets") ?: "").split(",").findAll { it }.collect { it as Integer }.sort()
+}
+
+// Named speeds use the top five presets when the model has fixed speeds
+private int speedToPct(String speed) {
+	def p = speedPresets()
+	def idx = SPEED_NAMES.indexOf(speed == "auto" ? "medium" : speed)
+	if (idx < 0) idx = 2
+	if (p.size() >= 5) return p[p.size() - 5 + idx]
+	return [25, 38, 50, 75, 100][idx]
+}
+
+private String pctToSpeed(int pct) {
+	if (pct <= 0) return "off"
+	def p = speedPresets()
+	if (p.size() >= 5) {
+		def top = p.drop(p.size() - 5)
+		def nearest = top.min { Math.abs(it - pct) }
+		return SPEED_NAMES[top.indexOf(nearest)]
+	}
+	return pct <= 30 ? "low" : pct <= 45 ? "medium-low" : pct <= 60 ? "medium" : pct <= 85 ? "medium-high" : "high"
+}
+
+private int snapSpeed(int pct) {
+	def p = speedPresets()
+	return p ? (p.min { Math.abs(it - pct) } as int) : pct
+}
 
 private int clamp(int value, int min, int max) {
 	return Math.max(min, Math.min(max, value))
