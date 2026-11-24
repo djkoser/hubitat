@@ -14,8 +14,17 @@
  * and github.com/tjbaker/homeassistant-fansync (Apache 2.0).
  *
  * API endpoints:
- *   Auth:      POST https://fanimation.apps.exosite.io/api:1/session
- *   WebSocket: wss://fanimation.apps.exosite.io/api:1/phone
+ *   Auth:        POST https://fanimation.apps.exosite.io/api:1/session
+ *   WebSocket:   wss://fanimation.apps.exosite.io/api:1/phone
+ *   Device spec: https://fanimation.apps.exosite.io/api:1/info-model (Fanimation's information
+ *                model: per-model traits, key ranges, "before" rules and error codes)
+ *
+ * Each "get" response carries the device's model (data.profile.esh.model, e.g. "...-FDR1L3")
+ * and the keys it supports (data.fields). The model suffix follows the information model:
+ *   fans:  FDR/FAR/UAR + L0 (no light) / L1 (on/off) / L2 (dimmable) / L3 (dimmable + color temp)
+ *   lights: L1 (on/off) / L2 (dimmable), with power/brightness on H00/H02
+ * From that the controller creates a "FanSync Fan" child for fans and a "FanSync Light" child
+ * for any light (fan light kit or standalone light), and routes status to both.
  */
 
 import groovy.json.JsonSlurper
@@ -240,6 +249,7 @@ private onReadyMessage(Map json) {
 	// Set acks include a fresh data.status, so they confirm state too.
 	if (json?.id != null) {
 		def did = state.pending?.remove(json.id.toString())
+		if (did && json?.data instanceof Map && (json.data.profile || json.data.fields)) ensureChildren(did, json.data)
 		def status = extractStatus(json)
 		if (did && status) routeStatus(did, status)
 		return
@@ -260,12 +270,14 @@ private Map extractStatus(Map json) {
 }
 
 private routeStatus(String did, Map status) {
-	def child = getChildDevice(childDni(did))
-	if (!child) {
+	def fan = getChildDevice(childDni(did))
+	def light = getChildDevice(lightDni(did))
+	if (!fan && !light) {
 		if (logEnable) log.debug "Status for unknown device ${did} — run discoverDevices"
 		return
 	}
-	child.parseStatus(status)
+	fan?.parseStatus(status)
+	light?.parseStatus(status)
 }
 
 // ── Child Management ──────────────────────────────────────────────────────────
@@ -274,20 +286,68 @@ private String childDni(String did) {
 	return "fansync-${did}"
 }
 
+private String lightDni(String did) {
+	return "fansync-${did}-light"
+}
+
+// The device list has names but no model, so children are created on each device's
+// first "get" response (ensureChildren), which carries the model and supported keys.
 private syncChildren(List devices) {
 	if (logEnable) log.debug "Devices: ${devices*.device}"
+	def names = state.deviceNames ?: [:]
 	devices.each { d ->
 		def did = d?.device
 		if (!did) return
-		def child = getChildDevice(childDni(did))
-		if (!child) {
-			def label = d?.properties?.displayName ?: "FanSync Fan ${did.toString().takeRight(6)}"
-			child = addChildDevice("fansync", "FanSync Fan", childDni(did),
-								   [name: "FanSync Fan", label: label, isComponent: false])
-			log.info "FanSync: created child '${label}' for device ${did}"
-		}
-		child.updateDataValue("fansyncId", did as String)
+		names[did as String] = d?.properties?.displayName ?: "FanSync ${did.toString().takeRight(6)}"
 	}
+	state.deviceNames = names
+	if (state.phase == "ready") names.keySet().each { pollDevice(it) }
+}
+
+private ensureChildren(String did, Map data) {
+	String model = data?.profile?.esh?.model ?: ""
+	List fields = (data?.fields instanceof List) ? data.fields.collect { it as String } : []
+	String label = state.deviceNames?.get(did) ?: "FanSync ${did.takeRight(6)}"
+	// Suffix per the information model: "-FDR1L3", "-FAR1L2", "-UAR1L3" (fans) or "-L2" (lights)
+	def mFan   = (model =~ /-(?:FDR|FAR|UAR)\d*L(\d)$/)
+	def mLight = (model =~ /-L(\d)$/)
+	boolean isFan = mFan.find()
+	boolean standalone = !isFan && mLight.find()
+	int lightClass = standalone ? (mLight.group(1) as Integer) : (isFan ? (mFan.group(1) as Integer) : -1)
+
+	def fan = getChildDevice(childDni(did))
+	if (!standalone) {
+		if (!fan) {
+			fan = addChildDevice("fansync", "FanSync Fan", childDni(did),
+								 [name: "FanSync Fan", label: label, isComponent: false])
+			log.info "FanSync: created fan '${label}' (${model ?: 'model unknown'})"
+		}
+		fan.updateDataValue("fansyncId", did)
+		if (model) fan.updateDataValue("model", model)
+		if (fields) fan.updateDataValue("fields", fields.join(","))
+	} else if (fan) {
+		log.warn "FanSync: '${label}' is a standalone light (${model}); its 'FanSync Fan' device can be deleted"
+	}
+
+	// Light: standalone L1/L2, or a fan with a light kit (H0B in fields, or model L1-L3)
+	boolean hasLight = standalone || fields.contains("H0B") || lightClass >= 1
+	if (!hasLight) return
+	def keys = standalone ?
+		[powerKey: "H00", levelKey: (lightClass >= 2 || fields.contains("H02")) ? "H02" : null, cctKey: null] :
+		[powerKey: "H0B", levelKey: (lightClass >= 2 || fields.contains("H0C")) ? "H0C" : null,
+		 cctKey: (lightClass >= 3 || fields.contains("H04")) ? "H04" : null]
+	def light = getChildDevice(lightDni(did))
+	if (!light) {
+		def lightLabel = standalone ? label : "${label} Light"
+		light = addChildDevice("fansync", "FanSync Light", lightDni(did),
+							   [name: "FanSync Light", label: lightLabel, isComponent: false])
+		log.info "FanSync: created light '${lightLabel}' (${model ?: 'model unknown'})"
+	}
+	light.updateDataValue("fansyncId", did)
+	light.updateDataValue("standalone", standalone ? "true" : "false")
+	if (model) light.updateDataValue("model", model)
+	keys.each { k, v -> if (v) light.updateDataValue(k, v) else light.removeDataValue(k) }
+	light.configureFeatures()
 }
 
 // Called by child devices — send protocol keys to this child's fan.
@@ -324,7 +384,9 @@ def reconnect() {
 }
 
 def refresh() {
-	getChildDevices().each { pollDevice(it.getDataValue("fansyncId")) }
+	def ids = (state.deviceNames ?: [:]).keySet() as Set
+	getChildDevices().each { def d = it.getDataValue("fansyncId"); if (d) ids << d }
+	ids.each { pollDevice(it) }
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────────────

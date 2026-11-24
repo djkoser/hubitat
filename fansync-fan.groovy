@@ -8,13 +8,20 @@
  * All cloud I/O goes through the parent (parent.componentSet / componentRefresh);
  * the parent pushes status back in via parseStatus().
  *
- * Protocol keys:
+ * Protocol keys (Fanimation information model, /api:1/info-model):
  *   H00 fan power (0=off, 1=on)
- *   H01 preset   (0=normal, 1=fresh_air)
- *   H02 fan speed (1-100)
+ *   H01 fan mode  (0=normal, 1=natural breeze; shown here as "fresh_air")
+ *   H02 fan speed (1-100; speed changes need H00=1 first)
+ *   H04 light color temperature (3000/4000/5000 K, L3 models)
+ *   H05 learn-load timer (FDR2 models, read-only)
  *   H06 direction (0=forward, 1=reverse)
  *   H0B light power (0=off, 1=on)
  *   H0C light brightness (1-100)
+ *   H0D Home Shield (0=off, 1=on)
+ *   H0E error code (0 = none; 250-269 = fault, see ERRORS)
+ *
+ * The light has its own "FanSync Light" device (created by the controller when the
+ * fan model has a light kit). The light commands below are kept for existing rules.
  */
 
 import groovy.json.JsonOutput
@@ -31,6 +38,10 @@ metadata {
 		attribute "preset",       "enum",   ["normal", "fresh_air"]
 		attribute "lightSwitch",  "enum",   ["on", "off"]
 		attribute "lightLevel",   "number"
+		attribute "homeShield",   "enum",   ["on", "off"]
+		attribute "errorCode",    "number"
+		attribute "errorText",    "string"
+		attribute "learnLoad",    "number"
 
 		command "lightOn"
 		command "lightOff"
@@ -40,6 +51,8 @@ metadata {
 									 constraints: ["forward", "reverse"]]]
 		command "setPreset",       [[name: "preset*",    type: "ENUM",
 									 constraints: ["normal", "fresh_air"]]]
+		command "setHomeShield",   [[name: "state*",     type: "ENUM",
+									 constraints: ["on", "off"]]]
 	}
 
 	preferences {
@@ -79,6 +92,7 @@ def off() {
 }
 
 def setLevel(def level, def duration = null) {
+	if ((level as Integer) <= 0) { off(); return }
 	def pct = clamp(level as Integer, 1, 100)
 	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
@@ -118,6 +132,12 @@ def setPreset(String preset) {
 	// H01: 0=normal, 1=fresh_air (breeze). Speed changes reset this to normal.
 	if (!parent.componentSet(device, ["H00": 1, "H01": (preset == "fresh_air") ? 1 : 0])) return
 	sendEvent(name: "preset", value: preset, descriptionText: "${device.displayName} preset is ${preset}")
+}
+
+def setHomeShield(String value) {
+	def on = value == "on"
+	if (!parent.componentSet(device, ["H0D": on ? 1 : 0])) return
+	sendEvent(name: "homeShield", value: on ? "on" : "off", descriptionText: "${device.displayName} Home Shield is ${on ? 'on' : 'off'}")
 }
 
 def lightOn() {
@@ -173,7 +193,28 @@ void parseStatus(Map status) {
 		def pct = status["H0C"] as Integer
 		sendEvent(name: "lightLevel", value: pct, unit: "%", descriptionText: "${dn} light level is ${pct}%")
 	}
+	if (status["H0D"] != null) {
+		def v = status["H0D"] == 1 ? "on" : "off"
+		sendEvent(name: "homeShield", value: v, descriptionText: "${dn} Home Shield is ${v}")
+	}
+	if (status["H05"] != null) sendEvent(name: "learnLoad", value: status["H05"] as Integer)
+	if (status["H0E"] != null) {
+		def code = status["H0E"] as Integer
+		def text = code == 0 ? "none" : (ERRORS[code] ?: "Unknown error ${code}")
+		if (code != 0 && device.currentValue("errorCode") != code) log.warn "${dn}: fan reports error ${code} (${text})"
+		sendEvent(name: "errorCode", value: code)
+		sendEvent(name: "errorText", value: text)
+	}
 }
+
+// H0E error codes from Fanimation's information model (errorFields)
+@groovy.transform.Field static final Map ERRORS = [
+	250: "Parameter error", 251: "Parameter length error", 252: "Memory allocate failed", 253: "Send error",
+	254: "Unknown commands", 255: "Unknown fields", 256: "Too many entries", 257: "Under voltage",
+	258: "Over voltage", 259: "Over current", 260: "Under speed", 261: "Over speed", 262: "Stalled fault",
+	263: "Open phase fault", 264: "Chase max speed", 265: "Over temperature", 266: "EEPROM error",
+	267: "Remote control did not learn", 268: "Driver IC not response", 269: "ACZ abnormal"
+]
 
 // ── Internal Helpers ──────────────────────────────────────────────────────────
 

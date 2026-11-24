@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.11.1",
+  "version": "1.12.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -53,6 +53,13 @@
       "name": "FanSync Fan",
       "namespace": "fansync",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-fan.groovy",
+      "required": false
+    },
+    {
+      "id": "a176beb7-49c6-4e65-b780-96c084d5d790",
+      "name": "FanSync Light",
+      "namespace": "fansync",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/fansync-light.groovy",
       "required": false
     },
     {
