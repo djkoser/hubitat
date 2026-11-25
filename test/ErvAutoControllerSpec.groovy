@@ -232,23 +232,23 @@ class ErvAutoControllerSpec extends Specification {
         living.states.vocIndex = 215; outside.states.vocIndex = 450; evaluate()
         then:
         status.states.ervStatus == "Recirculate"
-        status.states.ervCause == "Outdoor VOC spike"
+        status.states.ervCause == "Outdoor VOC index ≥ 400"
         status.states.ervReason == "indoor VOC index 215 ≥ 200 (Living Room), but outdoor VOC index 450 ≥ 400"
 
         when: "air clears inside its minimum run"
         living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
-        then: status.states.ervCause == "Minimum run"
+        then: status.states.ervCause == "Minimum run (30 min)"
 
         when: "outdoor NOx bad too"
         living.states.vocIndex = 215; outside.states.noxIndex = 150; hub.advance(60); evaluate()
-        then: status.states.ervCause == "Outdoor NOx high"
+        then: status.states.ervCause == "Outdoor NOx index ≥ 100"
 
         when: "after the minimum run, then high again inside the minimum off"
         living.states.vocIndex = 100; outside.states.noxIndex = 1; outside.states.vocIndex = 100
         hub.advance(26 * 60); evaluate()
         living.states.carbonDioxide = 1100; hub.advance(60); evaluate()
         then:
-        status.states.ervCause == "Minimum off"
+        status.states.ervCause == "Minimum off (30 min)"
 
         when: "a manual mode is selected"
         hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
@@ -299,5 +299,27 @@ class ErvAutoControllerSpec extends Specification {
         params.every { n, d -> d.size() == 4 && d[3].startsWith("Default ") && d[3] =~ /\[\d+\]/ }
         params.values().collectMany { d -> (d[3] =~ /\[(\d+)\]/).collect { it[1] as Integer } }.every { refs.containsKey(it) }
         refs.values().every { it[1].startsWith("https://") }
+    }
+
+    def "the status device carries the readings and Google's value lists"() {
+        given: hub.script.initialize()
+        def status = hub.children.values().first()
+        living.states.vocIndex = 203; living.states.noxIndex = 1; bedroom.states.carbonDioxide = 672
+        when: evaluate()
+        then:
+        status.states.carbonDioxide == 672
+        status.states.pm25 == 3
+        status.states.vocIndexBand == "200–224"
+        status.states.noxIndexBand == "1–24"
+        new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).size() == 20
+        new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).last() == "475–500"
+        new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200")
+
+        when: "manual mode: readings still update"
+        hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
+        living.states.vocIndex = 260; hub.script.evaluate()
+        then:
+        status.states.vocIndexBand == "250–274"
+        status.states.ervCause == "Manual"
     }
 }

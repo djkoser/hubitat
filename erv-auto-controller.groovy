@@ -209,9 +209,12 @@ def autoSwitchHandler(evt) {
 // ── Decision ─────────────────────────────────────────────────────────────────
 
 def evaluate() {
-	if (autoSwitch?.currentValue("switch") != "on") return
-
 	def p = PARAMS.collectEntries { n, d -> [(n): param(n)] }
+	if (autoSwitch?.currentValue("switch") != "on") {
+		updateStatusDevice(measure(p), p)   // readings stay current in manual modes too
+		return
+	}
+
 	def f = state.flags ?: [:]
 
 	def r = measure(p)
@@ -305,7 +308,7 @@ def evaluate() {
 	state.reason = reason
 	state.cause = cause
 	enforce(applied.state)
-	updateStatusDevice()
+	updateStatusDevice(r, p)
 }
 
 // Minimum run / minimum off per piece of equipment. Returns the state to apply and, if it
@@ -403,17 +406,59 @@ private String equipmentStatus() {
 	return erv ? "On" : (ah ? "Recirculate" : "Off")
 }
 
-private void updateStatusDevice() {
+// Short reasons for Google Home, with this app's thresholds in them (Google shows only values
+// from a list it receives in advance; the list itself is published in ervCauseValues)
+@groovy.transform.Field static final List CAUSES = ["Air good", "Indoor CO2 high", "Indoor VOC high", "Indoor NOx high",
+	"Indoor PM2.5 high", "CO2 critical", "Outdoor PM2.5 high", "Outdoor NOx high", "Outdoor VOC spike",
+	"Filtering particles", "Minimum run", "Minimum off", "Monitors offline", "Manual"]
+
+private String causeLabel(String key, Map p) {
+	switch (key) {
+		case "Indoor CO2 high":     return "Indoor CO2 ≥ ${fmt(p.ervAutoCo2AboveOutdoor)} ppm over outdoor"
+		case "Indoor VOC high":     return "Indoor VOC index ≥ ${fmt(p.ervAutoVocHigh)}"
+		case "Indoor NOx high":     return "Indoor NOx index ≥ ${fmt(p.ervAutoNoxHigh)}"
+		case "Indoor PM2.5 high":   return "Indoor PM2.5 ≥ ${fmt(p.ervAutoPm25High)} µg/m³"
+		case "CO2 critical":        return "CO2 ≥ ${fmt(p.ervAutoCo2Critical)} ppm (critical)"
+		case "Outdoor PM2.5 high":  return "Outdoor PM2.5 ≥ ${fmt(p.ervAutoOutdoorPm25High)} µg/m³"
+		case "Outdoor NOx high":    return "Outdoor NOx index ≥ ${fmt(p.ervAutoOutdoorNoxHigh)}"
+		case "Outdoor VOC spike":   return "Outdoor VOC index ≥ ${fmt(p.ervAutoOutdoorVocSpike)}"
+		case "Filtering particles": return "Filtering: indoor PM2.5 ≥ ${fmt(p.ervAutoPm25High)} µg/m³"
+		case "Minimum run":         return "Minimum run (${fmt(p.ervAutoMinRunMinutes)} min)"
+		case "Minimum off":         return "Minimum off (${fmt(p.ervAutoMinOffMinutes)} min)"
+		default:                    return key
+	}
+}
+
+// VOC/NOx index (1–500) in 25-point bands, for Google Home (which can't show an index as a number)
+@groovy.transform.Field static final List INDEX_BANDS = (0..19).collect { i -> "${i == 0 ? 1 : i * 25}–${i == 19 ? 500 : i * 25 + 24}".toString() }
+private String indexBand(def v) {
+	if (v == null) return null
+	int i = Math.min(19, Math.max(0, (int) (new BigDecimal(v.toString()).intValue() / 25)))
+	return INDEX_BANDS[i]
+}
+
+// r = measure() readings (null when only the relays changed)
+private void updateStatusDevice(Map r = null, Map p = null) {
 	def dev = getChildDevice(statusDni())
 	if (!dev) return
+	p = p ?: PARAMS.collectEntries { n, d -> [(n): param(n)] }
+	def set = { String name, def value, String unit = null ->
+		if (value != null && dev.currentValue(name)?.toString() != value.toString())
+			dev.sendEvent(name: name, value: value, unit: unit)
+	}
 	def s = equipmentStatus()
-	if (dev.currentValue("ervStatus") != s)
-		dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
+	if (dev.currentValue("ervStatus") != s) dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
 	boolean auto = autoSwitch?.currentValue("switch") == "on"
-	def cause = auto ? (state.cause ?: "Air good") : "Manual"
-	def reason = auto ? (state.reason ?: "") : "manual ERV mode (Auto is off)"
-	if (dev.currentValue("ervCause") != cause) dev.sendEvent(name: "ervCause", value: cause, descriptionText: "ERV reason: ${cause}")
-	if (dev.currentValue("ervReason") != reason) dev.sendEvent(name: "ervReason", value: reason)
+	set("ervCauseValues", groovy.json.JsonOutput.toJson(CAUSES.collect { causeLabel(it, p) }))
+	set("indexBandValues", groovy.json.JsonOutput.toJson(INDEX_BANDS))
+	set("ervCause", causeLabel(auto ? (state.cause ?: "Air good") : "Manual", p))
+	set("ervReason", auto ? (state.reason ?: "") : "manual ERV mode (Auto is off)")
+	if (r) {
+		set("carbonDioxide", r.inCo2M?.v, "ppm")
+		set("pm25", r.inPmM?.v, "µg/m³")
+		set("vocIndexBand", indexBand(r.inVocM?.v))
+		set("noxIndexBand", indexBand(r.inNoxM?.v))
+	}
 }
 
 // Set relays for a state. Order keeps the air handler running whenever the ERV runs.
@@ -471,7 +516,7 @@ private Map worst(List devs, String attr) {
 private String thinkingHtml() {
 	boolean auto = autoSwitch?.currentValue("switch") == "on"
 	def lines = []
-	lines << "<b style='font-size:15px'>${auto ? (state.current ?: equipmentStatus()) : equipmentStatus()}</b>" + (auto ? " — <b>${state.cause ?: '—'}</b>" : " — <b>Manual</b> (another ERV mode is selected; Auto is off)")
+	lines << "<b style='font-size:15px'>${auto ? (state.current ?: equipmentStatus()) : equipmentStatus()}</b>" + (auto ? " — <b>${state.cause ? causeLabel(state.cause, PARAMS.collectEntries { n, d -> [(n): param(n)] }) : '—'}</b>" : " — <b>Manual</b> (another ERV mode is selected; Auto is off)")
 	if (auto) lines << "${state.reason ?: '—'}"
 	lines << "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('MMM d h:mm a', location.timeZone) : '—'}"
 	def eq = state.equip ?: [:]
