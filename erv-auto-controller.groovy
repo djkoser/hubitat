@@ -3,7 +3,12 @@
  *
  * Drives an ERV and air handler from indoor/outdoor air-quality monitors
  * (AirGradient ONE + Open Air via the "AirGradient Local" driver) while the
- * "ERV Auto" mode switch is on. Outputs one of three states:
+ * "ERV Auto" mode switch is on. Any number of indoor and outdoor monitors:
+ *   - indoor: the worst room decides (highest CO2, VOC, NOx and PM2.5 across monitors)
+ *   - outdoor: conservative (highest reading across monitors)
+ *   - an offline/stale monitor is left out; fail-safe applies only when every
+ *     indoor or every outdoor monitor is offline/stale
+ * Outputs one of three states:
  *   On          — ERV + air handler run (ventilate)
  *   Recirculate — ERV stopped, air handler runs (filter indoor air)
  *   Off         — both stopped
@@ -12,7 +17,7 @@
  * stopped. Whenever the ERV runs, the air handler runs too.
  *
  * Decision order (first match wins):
- *   1. A sensor is offline/stale            -> fail-safe state (default On)
+ *   1. All indoor or all outdoor monitors offline/stale -> fail-safe state (default On)
  *   2. Indoor CO2 >= critical              -> On, whatever is outside
  *   3. Indoor CO2/VOC/NOx high             -> On, or Recirculate if outdoor VOC/NOx is high
  *   4. Indoor PM2.5 high                   -> On if outdoor PM2.5 is fine and lower than
@@ -73,8 +78,8 @@ def mainPage() {
 	dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
 		section("Devices") {
 			input "autoSwitch", "capability.switch", title: "Auto mode switch (controller acts only while it is on)", required: true
-			input "indoor", "capability.airQuality", title: "Indoor monitor (AirGradient ONE)", required: true
-			input "outdoor", "capability.airQuality", title: "Outdoor monitor (AirGradient Open Air)", required: true
+			input "indoor", "capability.airQuality", title: "Indoor monitors (AirGradient ONE; worst room decides)", multiple: true, required: true
+			input "outdoor", "capability.airQuality", title: "Outdoor monitors (AirGradient Open Air)", multiple: true, required: true
 			input "ervStopRelay", "capability.switch", title: "ERV stop relay (on = ERV stopped)", required: true
 			input "ahStopRelay", "capability.switch", title: "Air handler stop relay (on = air handler stopped)", required: true
 		}
@@ -83,7 +88,8 @@ def mainPage() {
 				paragraph "<b>Auto:</b> ${autoSwitch?.currentValue('switch') == 'on' ? 'active' : 'inactive (another mode is selected)'}<br>" +
 						  "<b>State:</b> ${state.current ?: '—'} &nbsp; <b>Reason:</b> ${state.reason ?: '—'}<br>" +
 						  "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : '—'}<br>" +
-						  "<b>Flags:</b> ${state.flags ?: [:]}"
+						  "<b>Flags:</b> ${state.flags ?: [:]}<br>" +
+						  "<b>Monitors:</b> ${monitorStatus()}"
 			}
 		}
 		section("Thresholds (hub variables)") {
@@ -113,8 +119,8 @@ def initialize() {
 	addInUseGlobalVar((PARAMS.keySet() as List) + OUTPUTS)
 	subscribe(autoSwitch, "switch", "autoSwitchHandler")
 	["pm25", "carbonDioxide", "vocIndex", "noxIndex", "healthStatus", "lastUpdate"].each {
-		subscribe(indoor, it, "sensorHandler")
-		subscribe(outdoor, it, "sensorHandler")
+		subscribe(indoorDevs(), it, "sensorHandler")
+		subscribe(outdoorDevs(), it, "sensorHandler")
 	}
 	PARAMS.keySet().each { subscribe(location, "variable:${it}", "paramHandler") }
 	runEvery1Minute("evaluate")
@@ -150,13 +156,19 @@ def evaluate() {
 	def f = state.flags ?: [:]
 	accountVentilation()
 
-	def inCo2 = val(indoor, "carbonDioxide")
-	def inVoc = val(indoor, "vocIndex")
-	def inNox = val(indoor, "noxIndex")
-	def inPm  = val(indoor, "pm25")
-	def outPm = val(outdoor, "pm25")
-	def outVoc = val(outdoor, "vocIndex")
-	def outNox = val(outdoor, "noxIndex")
+	def staleMs = (p.ervAutoStaleMinutes as BigDecimal) * 60000
+	def inLive  = indoorDevs().findAll { !isStale(it, staleMs) }
+	def outLive = outdoorDevs().findAll { !isStale(it, staleMs) }
+	def stale = (indoorDevs() + outdoorDevs()).findAll { isStale(it, staleMs) }
+
+	// Worst reading per pollutant across live monitors, with the monitor it came from
+	def inCo2M = worst(inLive, "carbonDioxide"), inVocM = worst(inLive, "vocIndex")
+	def inNoxM = worst(inLive, "noxIndex"),      inPmM  = worst(inLive, "pm25")
+	def outPmM = worst(outLive, "pm25"), outVocM = worst(outLive, "vocIndex"), outNoxM = worst(outLive, "noxIndex")
+	def inCo2 = inCo2M?.v, inVoc = inVocM?.v, inNox = inNoxM?.v, inPm = inPmM?.v
+	def outPm = outPmM?.v, outVoc = outVocM?.v, outNox = outNoxM?.v
+	boolean multiIn = indoorDevs().size() > 1
+	def where = { m -> (multiIn && m) ? " (${m.name})" : "" }
 
 	f.inCo2Bad  = hyst(f.inCo2Bad,  inCo2, p.ervAutoCo2High,         p.ervAutoCo2Buffer)
 	f.inVocBad  = hyst(f.inVocBad,  inVoc, p.ervAutoVocHigh,         p.ervAutoVocBuffer)
@@ -168,17 +180,16 @@ def evaluate() {
 	state.flags = f
 
 	def target, reason, urgent = false
-	def staleMs = (p.ervAutoStaleMinutes as BigDecimal) * 60000
-	def staleDev = [indoor, outdoor].find { d -> isStale(d, staleMs) }
 
-	if (staleDev) {
+	if (!inLive || !outLive) {
 		target = stateParam(p.ervAutoFailSafeState, "On"); urgent = true
-		reason = "${staleDev.displayName} offline/stale"
+		reason = "${!inLive ? 'all indoor' : 'all outdoor'} monitors offline/stale (${stale*.displayName.join(', ')})"
 	} else if (inCo2 != null && inCo2 >= p.ervAutoCo2Critical) {
 		target = "On"; urgent = true
-		reason = "CO2 ${inCo2} ≥ critical ${p.ervAutoCo2Critical}"
+		reason = "CO2 ${inCo2}${where(inCo2M)} ≥ critical ${p.ervAutoCo2Critical}"
 	} else if (f.inCo2Bad || f.inVocBad || f.inNoxBad) {
-		def what = [f.inCo2Bad ? "CO2 ${inCo2}" : null, f.inVocBad ? "VOC ${inVoc}" : null, f.inNoxBad ? "NOx ${inNox}" : null].findAll { it }.join(", ")
+		def what = [f.inCo2Bad ? "CO2 ${inCo2}${where(inCo2M)}" : null, f.inVocBad ? "VOC ${inVoc}${where(inVocM)}" : null,
+					f.inNoxBad ? "NOx ${inNox}${where(inNoxM)}" : null].findAll { it }.join(", ")
 		if (f.outVocBad || f.outNoxBad) {
 			target = "Recirculate"
 			reason = "indoor ${what} high but outdoor gases bad (VOC ${outVoc}, NOx ${outNox})"
@@ -189,10 +200,10 @@ def evaluate() {
 	} else if (f.inPmBad) {
 		if (!f.outPmBad && outPm != null && inPm != null && outPm + p.ervAutoPm25Margin <= inPm) {
 			target = "On"
-			reason = "indoor PM2.5 ${inPm} high, outdoor ${outPm} cleaner"
+			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} cleaner"
 		} else {
 			target = "Recirculate"
-			reason = "indoor PM2.5 ${inPm} high, outdoor ${outPm} not cleaner — filtering"
+			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} not cleaner — filtering"
 		}
 	} else {
 		target = stateParam(p.ervAutoIdleState, "Off")
@@ -210,6 +221,9 @@ def evaluate() {
 			}
 		}
 	}
+
+	// Name any monitor that is being ignored, without triggering the fail-safe
+	if (stale && inLive && outLive) reason += " (ignoring offline: ${stale*.displayName.join(', ')})"
 
 	def current = state.current
 	if (target != current) {
@@ -291,6 +305,26 @@ private boolean isStale(dev, staleMs) {
 		return la == null || now() - la.time > staleMs
 	}
 	return now() - (seen as Long) > staleMs
+}
+
+// Settings saved before multi-monitor support hold a single device; normalize to lists
+private List indoorDevs()  { def x = indoor;  x instanceof Collection ? (x as List) : (x ? [x] : []) }
+private List outdoorDevs() { def x = outdoor; x instanceof Collection ? (x as List) : (x ? [x] : []) }
+
+// Highest reading of an attribute across devices: [v: value, name: device name], or null
+private Map worst(List devs, String attr) {
+	Map best = null
+	devs.each { d ->
+		def v = val(d, attr)
+		if (v != null && (best == null || v > best.v)) best = [v: v, name: d.displayName]
+	}
+	return best
+}
+
+private String monitorStatus() {
+	def staleMs = (param("ervAutoStaleMinutes") as BigDecimal) * 60000
+	def fmt = { d -> "${d.displayName}${isStale(d, staleMs) ? ' <span style=\"color:#c00\">(offline/stale)</span>' : ''}" }
+	return "indoor: ${indoorDevs().collect(fmt).join(', ') ?: 'none'} &nbsp; outdoor: ${outdoorDevs().collect(fmt).join(', ') ?: 'none'}"
 }
 
 private val(dev, String attr) {
