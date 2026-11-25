@@ -413,16 +413,18 @@ private String equipmentStatus() {
 	"Filtering particles", "Minimum run", "Minimum off", "Monitors offline", "Manual"]
 
 private String causeLabel(String key, Map p) {
+	// "≥ trigger (clears ≤ level)": a reading between the two still counts as high (hysteresis)
+	def lim = { trig, buf, String unit = "" -> "≥ ${fmt(trig)}${unit} (clears ≤ ${fmt(trig - buf)}${unit})" }
 	switch (key) {
-		case "Indoor CO2 high":     return "Indoor CO2 ≥ ${fmt(p.ervAutoCo2AboveOutdoor)} ppm over outdoor"
-		case "Indoor VOC high":     return "Indoor VOC index ≥ ${fmt(p.ervAutoVocHigh)}"
-		case "Indoor NOx high":     return "Indoor NOx index ≥ ${fmt(p.ervAutoNoxHigh)}"
-		case "Indoor PM2.5 high":   return "Indoor PM2.5 ≥ ${fmt(p.ervAutoPm25High)} µg/m³"
+		case "Indoor CO2 high":     return "Indoor CO2 over outdoor ${lim(p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer, ' ppm')}"
+		case "Indoor VOC high":     return "Indoor VOC index ${lim(p.ervAutoVocHigh, p.ervAutoVocBuffer)}"
+		case "Indoor NOx high":     return "Indoor NOx index ${lim(p.ervAutoNoxHigh, p.ervAutoNoxBuffer)}"
+		case "Indoor PM2.5 high":   return "Indoor PM2.5 ${lim(p.ervAutoPm25High, p.ervAutoPm25Buffer, ' µg/m³')}"
 		case "CO2 critical":        return "CO2 ≥ ${fmt(p.ervAutoCo2Critical)} ppm (critical)"
-		case "Outdoor PM2.5 high":  return "Outdoor PM2.5 ≥ ${fmt(p.ervAutoOutdoorPm25High)} µg/m³"
-		case "Outdoor NOx high":    return "Outdoor NOx index ≥ ${fmt(p.ervAutoOutdoorNoxHigh)}"
-		case "Outdoor VOC spike":   return "Outdoor VOC index ≥ ${fmt(p.ervAutoOutdoorVocSpike)}"
-		case "Filtering particles": return "Filtering: indoor PM2.5 ≥ ${fmt(p.ervAutoPm25High)} µg/m³"
+		case "Outdoor PM2.5 high":  return "Outdoor PM2.5 ${lim(p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer, ' µg/m³')}"
+		case "Outdoor NOx high":    return "Outdoor NOx index ${lim(p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer)}"
+		case "Outdoor VOC spike":   return "Outdoor VOC index ${lim(p.ervAutoOutdoorVocSpike, p.ervAutoOutdoorGasBuffer)}"
+		case "Filtering particles": return "Filtering: indoor PM2.5 ${lim(p.ervAutoPm25High, p.ervAutoPm25Buffer, ' µg/m³')}"
 		case "Minimum run":         return "Minimum run (${fmt(p.ervAutoMinRunMinutes)} min)"
 		case "Minimum off":         return "Minimum off (${fmt(p.ervAutoMinOffMinutes)} min)"
 		default:                    return key

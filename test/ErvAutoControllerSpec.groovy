@@ -232,7 +232,7 @@ class ErvAutoControllerSpec extends Specification {
         living.states.vocIndex = 215; outside.states.vocIndex = 450; evaluate()
         then:
         status.states.ervStatus == "Recirculate"
-        status.states.ervCause == "Outdoor VOC index ≥ 400"
+        status.states.ervCause == "Outdoor VOC index ≥ 400 (clears ≤ 375)"
         status.states.ervReason == "indoor VOC index 215 ≥ 200 (Living Room), but outdoor VOC index 450 ≥ 400"
 
         when: "air clears inside its minimum run"
@@ -241,7 +241,7 @@ class ErvAutoControllerSpec extends Specification {
 
         when: "outdoor NOx bad too"
         living.states.vocIndex = 215; outside.states.noxIndex = 150; hub.advance(60); evaluate()
-        then: status.states.ervCause == "Outdoor NOx index ≥ 100"
+        then: status.states.ervCause == "Outdoor NOx index ≥ 100 (clears ≤ 75)"
 
         when: "after the minimum run, then high again inside the minimum off"
         living.states.vocIndex = 100; outside.states.noxIndex = 1; outside.states.vocIndex = 100
@@ -313,7 +313,7 @@ class ErvAutoControllerSpec extends Specification {
         status.states.noxIndexBand == "1–24"
         new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).size() == 20
         new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).last() == "475–500"
-        new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200")
+        new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200 (clears ≤ 150)")
 
         when: "manual mode: readings still update"
         hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
