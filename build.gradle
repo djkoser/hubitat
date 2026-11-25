@@ -1,0 +1,39 @@
+// Offline build checks and unit tests for the Hubitat apps and drivers in this repo.
+//
+// hubitat_ci (https://github.com/biocomp/hubitat_ci) compiles each script inside an
+// emulation of the Hubitat sandbox: it rejects disallowed imports/classes/methods and
+// validates definition(), metadata, preferences and capabilities. Spock specs then drive
+// the scripts with mocked platform executors.
+//
+// The three test pins move together: Groovy 2.5 <-> Spock 1.2 <-> hubitat_ci 0.17.
+// hubitat_ci 0.17 is binary-locked to Groovy 2.5, which does not run on JDK 16+, so the
+// compile/test toolchain is pinned to JDK 11 (Gradle itself may run on a newer JDK).
+// The hub runs Groovy 2.4, so the harness is slightly newer than production.
+
+plugins { id 'groovy' }
+
+sourceSets { test { groovy { srcDirs = ['test'] } } }   // specs + compile stubs (test/stubs)
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(11) } }
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://biocomp.pkgs.visualstudio.com/HubitatCiRelease/_packaging/hubitat_ci_feed@Release/maven/v1' }
+}
+
+dependencies {
+    testImplementation 'org.codehaus.groovy:groovy-all:2.5.4'
+    // Date.format()/parse() extensions live here in Groovy 2.5 (built into the hub's Groovy 2.4)
+    testImplementation 'org.codehaus.groovy:groovy-dateutil:2.5.4'
+    testImplementation 'org.spockframework:spock-core:1.2-groovy-2.5'
+    testImplementation 'me.biocomp.hubitat_ci:hubitat_ci:0.17'
+}
+
+test {
+    useJUnit()
+    testLogging { events 'failed'; exceptionFormat = 'full' }
+    // Scripts are loaded by relative path from the repo root; declaring them as inputs makes
+    // Gradle rerun the tests whenever an app or driver changes (not only when a spec does)
+    workingDir = projectDir
+    inputs.files(fileTree(projectDir) { include '*.groovy' }).withPropertyName('hubitatScripts')
+}

@@ -1,0 +1,33 @@
+name: Build checks and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 11: test toolchain (hubitat_ci 0.17 needs Groovy 2.5, which can't run on JDK 16+).
+      # JDK 21 (listed last, so it becomes JAVA_HOME): runs Gradle 9 itself.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            11
+            21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile checks and unit tests
+        run: ./gradlew test --console=plain -Porg.gradle.java.installations.fromEnv=JAVA_HOME_11_X64
+
+      - name: Test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
