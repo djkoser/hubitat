@@ -151,11 +151,17 @@ class ErvAutoControllerSpec extends Specification {
         h.script.param("ervAutoCo2High") == 1000
     }
 
-    def "an existing setting is not overwritten by the old hub variable"() {
-        given:
-        hub.settings.ervAutoVocHigh = 300
+    def "the hub variable wins on the first run even over a just-saved default, and only once"() {
+        given: "the first Done on the new page saved the field's default"
+        hub.settings.ervAutoVocHigh = 250
         hub.globals.ervAutoVocHigh = "200"
+
         when: hub.script.migrateFromHubVariables()
+        then: hub.settings.ervAutoVocHigh == 200
+
+        when: "the user later changes it; the leftover hub variable is not applied again"
+        hub.settings.ervAutoVocHigh = 300
+        hub.script.migrateFromHubVariables()
         then: hub.settings.ervAutoVocHigh == 300
     }
 }

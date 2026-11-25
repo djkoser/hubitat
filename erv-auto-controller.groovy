@@ -113,11 +113,13 @@ def installed() { initialize() }
 def updated()   { unsubscribe(); unschedule(); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
-// One-time carry-over of settings that lived in hub variables before Nov 2026: any setting
-// still unset takes the old hub variable's value. Safe to delete once every install has run it.
+// One-time carry-over of settings that lived in hub variables before Nov 2026. Runs once
+// (state.hubVarsMigrated): the first save of the new settings page also stores each field's
+// default, so the old hub variable's value must win on that first run. Safe to delete later.
 private void migrateFromHubVariables() {
+	if (state.hubVarsMigrated) return
+	state.hubVarsMigrated = true
 	PARAMS.each { n, d ->
-		if (settings[n] != null) return
 		def gv = getGlobalVar(n)
 		if (gv?.value == null || gv.value.toString() == "") return
 		def type = d[0] == "String" ? "enum" : (d[0] == "Decimal" ? "decimal" : "number")

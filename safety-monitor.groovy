@@ -115,23 +115,26 @@ def installed() { initialize() }
 def updated()   { unsubscribe(); unschedule(); state.remove("reolinkAuthFailed"); state.remove("reolinkToken"); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
-// One-time carry-over of settings that lived in hub variables before Nov 2026: any setting
-// still unset takes the old hub variable's value. Safe to delete once every install has run it.
+// One-time carry-over of settings that lived in hub variables before Nov 2026. Runs once
+// (state.hubVarsMigrated): the first save of the new settings page also stores each field's
+// default, so the old hub variable's value must win on that first run. Safe to delete later.
 private void migrateFromHubVariables() {
+	if (state.hubVarsMigrated) return
+	state.hubVarsMigrated = true
 	def gvText = { String n -> def gv = getGlobalVar(n); gv?.value != null ? gv.value.toString().trim() : "" }
 	PARAMS.each { n, d ->
-		if (settings[n] != null || !gvText(n)) return
+		if (!gvText(n)) return
 		def v = gvText(n)
 		app.updateSetting(n, d[0] == "String" ? [type: "text", value: v] : [type: "number", value: (v as BigDecimal).intValue()])
 		log.info "Safety Monitor: moved setting ${n} from its hub variable into the app"
 	}
 	NVR_SETTINGS.each { n, d ->
-		if (settings[n] != null || !gvText(n)) return
+		if (!gvText(n)) return
 		app.updateSetting(n, [type: d[0], value: gvText(n)])
 		log.info "Safety Monitor: moved setting ${n} from its hub variable into the app"
 	}
 	// Channels used to be named hub variables listed in cameraChannelVars
-	if (settings.cameraChannels == null && settings.cameraChannelVars) {
+	if (settings.cameraChannelVars) {
 		def chans = settings.cameraChannelVars.split(",").collect { gvText(it.trim()) }.findAll { it.isInteger() }
 		if (chans) {
 			app.updateSetting("cameraChannels", [type: "text", value: chans.join(",")])
