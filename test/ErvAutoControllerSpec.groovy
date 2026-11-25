@@ -223,4 +223,33 @@ class ErvAutoControllerSpec extends Specification {
         hub.script.initialize()
         then: hub.children.size() == 1
     }
+
+    def "the status device also says why"() {
+        given: hub.settings.ervAutoVocHigh = 200; hub.settings.ervAutoOutdoorVocHigh = 250
+        hub.script.initialize()
+        def status = hub.children.values().first()
+
+        when: "indoor VOC high, outdoor VOC high: recirculating"
+        living.states.vocIndex = 215; outside.states.vocIndex = 271; evaluate()
+        then:
+        status.states.ervStatus == "Recirculate"
+        status.states.ervCause == "Outdoor air bad"
+        status.states.ervReason == "indoor VOC 215 (Living Room) high but outdoor gases bad (VOC 271, NOx 1)"
+
+        when: "air clears inside its minimum run"
+        living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
+        then: status.states.ervCause == "Minimum run"
+
+        when: "after the minimum run, then high again inside the minimum off"
+        hub.advance(26 * 60); evaluate()
+        living.states.carbonDioxide = 1100; hub.advance(60); evaluate()
+        then:
+        status.states.ervCause == "Minimum off"
+
+        when: "a manual mode is selected"
+        hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
+        then:
+        status.states.ervCause == "Manual"
+        status.states.ervReason == "manual ERV mode (Auto is off)"
+    }
 }

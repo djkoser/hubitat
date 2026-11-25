@@ -157,6 +157,7 @@ def autoSwitchHandler(evt) {
 		state.remove("equip")   // entering Auto: equipment timing starts fresh
 		evaluate()
 	}
+	updateStatusDevice()
 }
 
 def sensorHandler(evt) {
@@ -199,37 +200,44 @@ def evaluate() {
 	f.outNoxBad = hyst(f.outNoxBad, outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer)
 	state.flags = f
 
-	def target, reason
+	def target, reason, cause
 	boolean urgent = false    // may start equipment during its minimum off time
 	boolean protect = false   // may stop the ERV during its minimum run time (outdoor air bad)
 
 	if (!inLive || !outLive) {
 		target = stateParam(p.ervAutoFailSafeState, "On"); urgent = true
 		reason = "${!inLive ? 'all indoor' : 'all outdoor'} monitors offline/stale (${stale*.displayName.join(', ')})"
+		cause = "Monitors offline"
 	} else if (inCo2 != null && inCo2 >= p.ervAutoCo2Critical) {
 		target = "On"; urgent = true
 		reason = "CO2 ${inCo2}${where(inCo2M)} ≥ critical ${p.ervAutoCo2Critical}"
+		cause = "CO2 critical"
 	} else if (f.inCo2Bad || f.inVocBad || f.inNoxBad) {
 		def what = [f.inCo2Bad ? "CO2 ${inCo2}${where(inCo2M)} (${co2Excess} above outdoor)" : null, f.inVocBad ? "VOC ${inVoc}${where(inVocM)}" : null,
 					f.inNoxBad ? "NOx ${inNox}${where(inNoxM)}" : null].findAll { it }.join(", ")
 		if (f.outVocBad || f.outNoxBad) {
 			target = "Recirculate"; protect = true
 			reason = "indoor ${what} high but outdoor gases bad (VOC ${outVoc}, NOx ${outNox})"
+			cause = "Outdoor air bad"
 		} else {
 			target = "On"
 			reason = "indoor ${what} high"
+			cause = "Indoor air"
 		}
 	} else if (f.inPmBad) {
 		if (!f.outPmBad && outPm != null && inPm != null && outPm + p.ervAutoPm25Margin <= inPm) {
 			target = "On"
 			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} cleaner"
+			cause = "Indoor air"
 		} else {
 			target = "Recirculate"; protect = f.outPmBad as boolean
 			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} not cleaner — filtering"
+			cause = "Filtering particles"
 		}
 	} else {
 		target = stateParam(p.ervAutoIdleState, "Off")
 		reason = "air good"
+		cause = "Air good"
 	}
 
 	// Name any monitor that is being ignored, without triggering the fail-safe
@@ -237,7 +245,10 @@ def evaluate() {
 
 	// Equipment protection: the state actually applied may lag the target
 	def applied = applyCycleLimits(target, urgent, protect, p)
-	if (applied.state != target) reason = "${reason} — holding ${applied.state}: ${applied.why}"
+	if (applied.state != target) {
+		reason = "${reason} — holding ${applied.state}: ${applied.why}"
+		cause = STATES.indexOf(applied.state) < STATES.indexOf(target) ? "Minimum run" : "Minimum off"   // STATES runs On → Off
+	}
 
 	def current = state.current
 	if (applied.state != current) {
@@ -249,7 +260,9 @@ def evaluate() {
 		publish(applied.state, reason)
 	}
 	state.reason = reason
+	state.cause = cause
 	enforce(applied.state)
+	updateStatusDevice()
 }
 
 // Minimum run / minimum off per piece of equipment. Returns the state to apply and, if it
@@ -326,6 +339,11 @@ private void updateStatusDevice() {
 		dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
 	dev.sendEvent(name: "ervRunning", value: (ervStopRelay.currentValue("switch") == "off").toString())
 	dev.sendEvent(name: "airHandlerRunning", value: (ahStopRelay.currentValue("switch") == "off").toString())
+	boolean auto = autoSwitch?.currentValue("switch") == "on"
+	def cause = auto ? (state.cause ?: "Air good") : "Manual"
+	def reason = auto ? (state.reason ?: "") : "manual ERV mode (Auto is off)"
+	if (dev.currentValue("ervCause") != cause) dev.sendEvent(name: "ervCause", value: cause, descriptionText: "ERV reason: ${cause}")
+	if (dev.currentValue("ervReason") != reason) dev.sendEvent(name: "ervReason", value: reason)
 }
 
 // Set relays for a state. Order keeps the air handler running whenever the ERV runs.
