@@ -431,9 +431,7 @@ private String causeLabel(String key, Map p) {
 	}
 }
 
-// VOC/NOx index (1–500) as text for Google Home, which shows it as a mode value: every possible
-// value is listed in indexValues (Google has no unitless number slot)
-@groovy.transform.Field static final List INDEX_VALUES = (1..500).collect { it.toString() }
+// VOC/NOx index (1–500) as a whole number, for Google Home (a Modes value range 1..500)
 private String indexText(def v) {
 	if (v == null) return null
 	return Math.min(500, Math.max(1, new BigDecimal(v.toString()).setScale(0, BigDecimal.ROUND_HALF_UP).intValue())).toString()
@@ -452,7 +450,6 @@ private void updateStatusDevice(Map r = null, Map p = null) {
 	if (dev.currentValue("ervStatus") != s) dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
 	boolean auto = autoSwitch?.currentValue("switch") == "on"
 	set("ervCauseValues", groovy.json.JsonOutput.toJson(CAUSES.collect { causeLabel(it, p) }))
-	set("indexValues", groovy.json.JsonOutput.toJson(INDEX_VALUES))
 	set("ervCause", causeLabel(auto ? (state.cause ?: "Air good") : "Manual", p))
 	set("ervReason", auto ? (state.reason ?: "") : "manual ERV mode (Auto is off)")
 	if (r) {

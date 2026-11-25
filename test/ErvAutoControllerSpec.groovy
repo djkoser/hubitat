@@ -311,8 +311,6 @@ class ErvAutoControllerSpec extends Specification {
         status.states.pm25 == 3
         status.states.vocIndex == "203"
         status.states.noxIndex == "1"
-        new groovy.json.JsonSlurper().parseText(status.states.indexValues).size() == 500
-        new groovy.json.JsonSlurper().parseText(status.states.indexValues).last() == "500"
         new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200 (clears ≤ 150)")
 
         when: "manual mode: readings still update"

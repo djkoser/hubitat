@@ -7,7 +7,7 @@
  * is selected, plus why: ervCause is a short category (for Google Home) and ervReason the
  * full explanation (for dashboards), plus the worst indoor readings it is reacting to. It has no
  * commands. For Google Home (community app): Modes trait (query only) for ervStatus, ervCause
- * (values @ervCauseValues) and vocIndex / noxIndex (values @indexValues); SensorState
+ * (values @ervCauseValues) and vocIndex / noxIndex (values 1..500); SensorState
  * for carbonDioxide and pm25.
  */
 
@@ -23,7 +23,6 @@ metadata {
 		attribute "pm25", "number"              // worst indoor PM2.5, µg/m³
 		attribute "vocIndex", "string"          // worst indoor VOC index (1–500)
 		attribute "noxIndex", "string"          // worst indoor NOx index (1–500)
-		attribute "indexValues", "string"       // JSON list "1".."500" (for Google Home)
 	}
 }
 
