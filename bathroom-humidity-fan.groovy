@@ -2,7 +2,10 @@
  * Bathroom Humidity Fan — Hubitat App (install one instance per bathroom)
  *
  * Compares a bathroom humidity sensor to a reference sensor elsewhere in the house
- * (e.g. the AirGradient indoor monitor). The difference ("delta", in %RH) drives the fan:
+ * (e.g. the AirGradient indoor monitor). The difference ("delta", in %RH) drives the fan.
+ * When both sensors report temperature, the reference is first converted to the %RH the
+ * same air would read at the bathroom's temperature (Magnus formula): a bathroom 9°F colder
+ * than the reference room otherwise reads ~13 points "more humid" with no shower at all.
  *
  *   - Auto on:   delta rises to bathFanStartDelta or more and the fan is off -> fan on.
  *   - Fast rise: bathroom humidity climbs bathFanRiseDelta or more within bathFanRiseMinutes
@@ -69,7 +72,7 @@ def mainPage() {
 		if (app.id) {
 			section("Status") {
 				def d = delta()
-				paragraph "<b>Bathroom:</b> ${num(bathSensor?.currentValue('humidity')) ?: '—'}%  <b>Reference:</b> ${num(refSensor?.currentValue('humidity')) ?: '—'}%  " +
+				paragraph "<b>Bathroom:</b> ${num(bathSensor?.currentValue('humidity')) ?: '—'}%  <b>Reference:</b> ${num(refSensor?.currentValue('humidity')) ?: '—'}% (${refHumidity() ?: '—'}% at bathroom temperature)  " +
 						  "<b>Delta:</b> ${d != null ? d.setScale(1, BigDecimal.ROUND_HALF_UP) + '%' : 'unavailable'}  " +
 							  "<b>Rise (${param('bathFanRiseMinutes')} min):</b> ${rise() != null ? rise().setScale(1, BigDecimal.ROUND_HALF_UP) + '%' : '—'}<br>" +
 						  "<b>State:</b> ${stateText()}"
@@ -112,11 +115,31 @@ def logsOff() { app.updateSetting("logEnable", [value: "false", type: "bool"]) }
 
 private BigDecimal delta() {
 	def b = num(bathSensor?.currentValue("humidity"))
-	def r = num(refSensor?.currentValue("humidity"))
+	def r = refHumidity()
 	if (b == null || r == null) return null
 	if (refSensor.hasAttribute("healthStatus") && refSensor.currentValue("healthStatus") == "offline") return null
 	return b - r
 }
+
+// Reference %RH converted to the bathroom's temperature (same moisture, different air
+// temperature), or the raw reference reading when either temperature is unavailable.
+private BigDecimal refHumidity() {
+	def r = num(refSensor?.currentValue("humidity"))
+	if (r == null) return null
+	def tb = celsius(bathSensor?.currentValue("temperature"))
+	def tr = celsius(refSensor?.currentValue("temperature"))
+	if (tb == null || tr == null) return r
+	double adj = r.toDouble() * satPressure(tr) / satPressure(tb)
+	return new BigDecimal(Math.min(adj, 100d)).setScale(1, BigDecimal.ROUND_HALF_UP)
+}
+
+private Double celsius(v) {
+	def t = num(v)
+	if (t == null) return null
+	return location?.temperatureScale == "C" ? t.toDouble() : (t.toDouble() - 32d) * 5d / 9d
+}
+
+private double satPressure(double c) { 6.112d * Math.exp(17.62d * c / (243.12d + c)) }
 
 private boolean humid() { def d = delta(); d != null && d > param("bathFanStopDelta") }
 

@@ -36,7 +36,7 @@ class AppHarness {
                    warn: { m -> h.logs << "warn: $m" }, error: { m -> h.logs << "error: $m" },
                    trace: { m -> h.logs << "trace: $m" }] as me.biocomp.hubitat_ci.api.common_api.Log
         def location = [getTimeZone: { TimeZone.getTimeZone("America/Chicago") },
-                        getName: { "Home" }] as me.biocomp.hubitat_ci.api.common_api.Location
+                        getName: { "Home" }, getTemperatureScale: { "F" }] as me.biocomp.hubitat_ci.api.common_api.Location
         def app = [getId: { 1L }, getLabel: { "Test App" },
                    updateSetting: { String n, v -> h.settings[n] = (v instanceof Map ? v.value : v) },
                    removeSetting: { String n -> h.settings.remove(n) }] as me.biocomp.hubitat_ci.api.common_api.InstalledAppWrapper

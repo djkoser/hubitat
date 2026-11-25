@@ -168,4 +168,25 @@ class BathroomHumidityFanSpec extends Specification {
         when: hub.advance(600); humidity(43)
         then: fan.commandNames() == ["off"]
     }
+
+    def "a colder bathroom holding the same moisture as the house does not start the fan"() {
+        given: "house 37% at 74°F, which is ~50% at 65°F"
+        ref.states.humidity = 37; ref.states.temperature = 74
+        bath.states.temperature = 65
+        when: humidity(49)
+        then: fan.calls.isEmpty()
+    }
+
+    def "a shower in a colder bathroom still starts the fan"() {
+        given: ref.states.humidity = 37; ref.states.temperature = 74
+        bath.states.temperature = 65
+        when: humidity(61)                       // ~11 above the temperature-corrected 50
+        then: fan.commandNames() == ["on"]
+    }
+
+    def "without a bathroom temperature the raw reference is used"() {
+        given: ref.states.humidity = 37; ref.states.temperature = 74
+        when: humidity(49)
+        then: fan.commandNames() == ["on"]
+    }
 }
