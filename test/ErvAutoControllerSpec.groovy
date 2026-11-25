@@ -41,7 +41,7 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "On"
         ervRuns() && ahRuns()
-        hub.state.reason == "indoor CO2 over outdoor 680 ppm ≥ 600 ppm (1100 ppm in Master Bedroom vs 420 ppm outdoors); outdoor VOC index 100 < 250, NOx index 1 < 50"
+        hub.state.reason == "indoor CO2 over outdoor 680 ppm ≥ 600 ppm (1100 ppm in Master Bedroom vs 420 ppm outdoors); outdoor PM2.5 4 µg/m³ < 35 µg/m³, NOx index 1 < 50, VOC index 100 < 400"
     }
 
     def "turns the air handler on before the ERV"() {
@@ -225,16 +225,16 @@ class ErvAutoControllerSpec extends Specification {
     }
 
     def "the status device also says why"() {
-        given: hub.settings.ervAutoVocHigh = 200; hub.settings.ervAutoOutdoorVocHigh = 250
+        given: hub.settings.ervAutoVocHigh = 200
         hub.script.initialize()
         def status = hub.children.values().first()
 
         when: "indoor VOC high, outdoor VOC high: recirculating"
-        living.states.vocIndex = 215; outside.states.vocIndex = 271; evaluate()
+        living.states.vocIndex = 215; outside.states.vocIndex = 450; evaluate()
         then:
         status.states.ervStatus == "Recirculate"
-        status.states.ervCause == "Outdoor VOC high"
-        status.states.ervReason == "indoor VOC index 215 ≥ 200 (Living Room), but outdoor VOC index 271 ≥ 250, NOx index 1 < 50"
+        status.states.ervCause == "Outdoor VOC spike"
+        status.states.ervReason == "indoor VOC index 215 ≥ 200 (Living Room), but outdoor VOC index 450 ≥ 400"
 
         when: "air clears inside its minimum run"
         living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
@@ -242,7 +242,7 @@ class ErvAutoControllerSpec extends Specification {
 
         when: "outdoor NOx bad too"
         living.states.vocIndex = 215; outside.states.noxIndex = 150; hub.advance(60); evaluate()
-        then: status.states.ervCause == "Outdoor VOC and NOx high"
+        then: status.states.ervCause == "Outdoor NOx high"
 
         when: "after the minimum run, then high again inside the minimum off"
         living.states.vocIndex = 100; outside.states.noxIndex = 1; outside.states.vocIndex = 100
@@ -262,6 +262,53 @@ class ErvAutoControllerSpec extends Specification {
         given: hub.settings.ervAutoVocHigh = 200
         living.states.vocIndex = 215; evaluate()
         when: living.states.vocIndex = 180; hub.advance(60); evaluate()
-        then: hub.state.reason.startsWith("indoor VOC index 180 (high until ≤ 150) (Living Room); outdoor VOC index 100 < 250")
+        then: hub.state.reason.startsWith("indoor VOC index 180 (high until ≤ 150) (Living Room); outdoor PM2.5 4 µg/m³ < 35 µg/m³")
+    }
+
+    def "stage 1: an elevated outdoor VOC index alone doesn't block ventilation; a spike does"() {
+        given: hub.settings.ervAutoVocHigh = 200; living.states.vocIndex = 215
+        when: outside.states.vocIndex = 300; evaluate()
+        then: hub.state.current == "On"
+        when: outside.states.vocIndex = 420; hub.advance(60); evaluate()
+        then: hub.state.current == "Recirculate" && hub.state.cause == "Outdoor VOC spike"
+    }
+
+    def "stage 1: outdoor smoke (PM2.5) blocks ventilation for indoor VOC"() {
+        given: hub.settings.ervAutoVocHigh = 200; living.states.vocIndex = 215; outside.states.pm25 = 40
+        expect: evaluate() == "Recirculate"
+        hub.state.cause == "Outdoor PM2.5 high"
+    }
+
+    def "stage 2: indoor VOC rising while ventilating proves the outdoor air worse"() {
+        given: hub.settings.ervAutoVocHigh = 200; hub.script.initialize()
+        def status = hub.children.values().first()
+        living.states.vocIndex = 215; evaluate()
+
+        expect: "testing while the run is young"
+        hub.state.current == "On"
+        status.states.ervCause == "Testing outdoor air"
+        hub.state.reason.contains("testing outdoor air: indoor VOC index 215 → 215 after 0 of 15 min")
+
+        when: "indoor VOC climbs 25 in 15 minutes of ventilating"
+        living.states.vocIndex = 240; hub.advance(15 * 60); evaluate(); evaluate()
+        then: "recirculates at once (outdoor bad may stop the ERV inside its minimum run), and says why"
+        hub.state.current == "Recirculate"
+        status.states.ervCause == "Outdoor VOC confirmed"
+        hub.state.reason.contains("ventilating raised indoor VOC index 215 → 240 in 15 min (retrying at")
+
+        when: "after the holdoff it is allowed to try again"
+        hub.advance(61 * 60); evaluate()
+        then: hub.state.current == "On"
+    }
+
+    def "stage 2: indoor VOC falling while ventilating passes the test"() {
+        given: hub.settings.ervAutoVocHigh = 200
+        living.states.vocIndex = 230; evaluate()
+        when: living.states.vocIndex = 210; hub.advance(15 * 60); evaluate()
+        then:
+        hub.state.current == "On"
+        hub.state.lastVocTrial.passed
+        hub.state.cause == "Indoor VOC high"
+        hub.script.thinkingHtml().contains("last test passed at")
     }
 }

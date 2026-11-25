@@ -74,9 +74,12 @@ preferences { page(name: "mainPage") }
 	ervAutoOutdoorPm25High:    ["Decimal", 35,  "Outdoor PM2.5 (µg/m³) considered bad"],
 	ervAutoOutdoorPm25Buffer:  ["Decimal", 5,   "Outdoor PM2.5 hysteresis"],
 	ervAutoPm25Margin:         ["Decimal", 5,   "Outdoor PM2.5 must be this much lower than indoor to ventilate for PM"],
-	ervAutoOutdoorVocHigh:     ["Number", 250,  "Outdoor VOC index considered bad"],
+	ervAutoOutdoorVocSpike:    ["Number", 400,  "Outdoor VOC index that alone blocks ventilation (a strong spike; 100 = normal for that sensor)"],
 	ervAutoOutdoorNoxHigh:     ["Number", 50,   "Outdoor NOx index considered bad"],
 	ervAutoOutdoorGasBuffer:   ["Number", 25,   "Outdoor VOC/NOx hysteresis"],
+	ervAutoVocTrialMinutes:    ["Number", 15,   "Minutes into a VOC-driven run to check that indoor VOC is falling"],
+	ervAutoVocTrialRise:       ["Number", 20,   "Indoor VOC index rise during that check that shows the outdoor air is worse"],
+	ervAutoVocHoldoffMinutes:  ["Number", 60,   "Minutes to recirculate after outdoor air proved worse, before trying again"],
 	ervAutoMinRunMinutes:      ["Number", 30,   "Once started, the ERV / air handler runs at least this many minutes"],
 	ervAutoMinOffMinutes:      ["Number", 30,   "Once stopped, the ERV / air handler stays off at least this many minutes"],
 	ervAutoStaleMinutes:       ["Number", 15,   "Minutes without a sensor update before fail-safe"],
@@ -86,8 +89,9 @@ preferences { page(name: "mainPage") }
 // Outputs published for other apps/dashboards (create them as String hub variables to use them)
 @groovy.transform.Field static final List OUTPUTS = ["ervAutoState", "ervAutoReason"]
 @groovy.transform.Field static final List STATES = ["On", "Recirculate", "Off"]
-// Settings replaced Nov 2026 (absolute CO2 threshold, per-hour minimum, state dwell), removed on update
-@groovy.transform.Field static final List RETIRED_SETTINGS = ["ervAutoCo2High", "ervAutoMinDwellMinutes", "ervAutoMinVentMinutesPerHour"]
+// Settings replaced Nov 2026 (absolute CO2 threshold, per-hour minimum, state dwell, outdoor VOC veto), removed on update
+@groovy.transform.Field static final List RETIRED_SETTINGS = ["ervAutoCo2High", "ervAutoMinDwellMinutes", "ervAutoMinVentMinutesPerHour",
+                                                               "ervAutoOutdoorVocHigh"]
 
 def mainPage() {
 	dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
@@ -100,10 +104,7 @@ def mainPage() {
 		}
 		if (app.id) {
 			section("Status") {
-				paragraph "<b>Auto:</b> ${autoSwitch?.currentValue('switch') == 'on' ? 'active' : 'inactive (another mode is selected)'}<br>" +
-						  "<b>State:</b> ${state.current ?: '—'} &nbsp; <b>Reason:</b> ${state.reason ?: '—'}<br>" +
-						  "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : '—'}<br>" +
-						  "<b>Monitors:</b> ${monitorStatus()}<br><br>" + readingsTable()
+				paragraph thinkingHtml() + "<br>" + readingsTable()
 			}
 		}
 		section("Thresholds") {
@@ -196,7 +197,7 @@ def evaluate() {
 	f.inNoxBad  = hyst(f.inNoxBad,  inNox, p.ervAutoNoxHigh,         p.ervAutoNoxBuffer)
 	f.inPmBad   = hyst(f.inPmBad,   inPm,  p.ervAutoPm25High,        p.ervAutoPm25Buffer)
 	f.outPmBad  = hyst(f.outPmBad,  outPm, p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer)
-	f.outVocBad = hyst(f.outVocBad, outVoc, p.ervAutoOutdoorVocHigh, p.ervAutoOutdoorGasBuffer)
+	f.outVocBad = hyst(f.outVocBad, outVoc, p.ervAutoOutdoorVocSpike, p.ervAutoOutdoorGasBuffer)
 	f.outNoxBad = hyst(f.outNoxBad, outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer)
 	state.flags = f
 
@@ -207,7 +208,7 @@ def evaluate() {
 	def inVocText  = vsLimit("VOC index", inVoc, p.ervAutoVocHigh, p.ervAutoVocBuffer, f.inVocBad) + (f.inVocBad ? where(inVocM) : "")
 	def inNoxText  = vsLimit("NOx index", inNox, p.ervAutoNoxHigh, p.ervAutoNoxBuffer, f.inNoxBad) + (f.inNoxBad ? where(inNoxM) : "")
 	def inPmText   = vsLimit("PM2.5", inPm, p.ervAutoPm25High, p.ervAutoPm25Buffer, f.inPmBad, "µg/m³") + (f.inPmBad ? where(inPmM) : "")
-	def outVocText = vsLimit("VOC index", outVoc, p.ervAutoOutdoorVocHigh, p.ervAutoOutdoorGasBuffer, f.outVocBad)
+	def outVocText = vsLimit("VOC index", outVoc, p.ervAutoOutdoorVocSpike, p.ervAutoOutdoorGasBuffer, f.outVocBad)
 	def outNoxText = vsLimit("NOx index", outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer, f.outNoxBad)
 	def outPmText  = vsLimit("PM2.5", outPm, p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer, f.outPmBad, "µg/m³")
 
@@ -225,13 +226,18 @@ def evaluate() {
 		cause = "CO2 critical"
 	} else if (f.inCo2Bad || f.inVocBad || f.inNoxBad) {
 		def what = [f.inCo2Bad ? co2Text : null, f.inVocBad ? inVocText : null, f.inNoxBad ? inNoxText : null].findAll { it }.join(", ")
-		if (f.outVocBad || f.outNoxBad) {
+		// Outdoor air blocks ventilation only on evidence of a plume: smoke/dust (PM2.5, absolute), combustion
+		// (NOx), a strong VOC spike, or a ventilation test that raised indoor VOC (see checkVocTrial)
+		boolean vetoed = vocVetoActive()
+		if (f.outPmBad || f.outNoxBad || f.outVocBad || vetoed) {
 			target = "Recirculate"; protect = true
-			reason = "indoor ${what}, but outdoor ${outVocText}, ${outNoxText}"
-			cause = f.outVocBad && f.outNoxBad ? "Outdoor VOC and NOx high" : (f.outVocBad ? "Outdoor VOC high" : "Outdoor NOx high")
+			def why = [vetoed ? vocVetoText() : null, f.outPmBad ? outPmText : null, f.outNoxBad ? outNoxText : null,
+					   f.outVocBad ? outVocText : null].findAll { it }
+			reason = "indoor ${what}, but outdoor ${why.join(', ')}"
+			cause = vetoed ? "Outdoor VOC confirmed" : (f.outPmBad ? "Outdoor PM2.5 high" : (f.outNoxBad ? "Outdoor NOx high" : "Outdoor VOC spike"))
 		} else {
 			target = "On"
-			reason = "indoor ${what}; outdoor ${outVocText}, ${outNoxText}"
+			reason = "indoor ${what}; outdoor ${outPmText}, ${outNoxText}, ${outVocText}"
 			cause = f.inCo2Bad ? "Indoor CO2 high" : (f.inVocBad ? "Indoor VOC high" : "Indoor NOx high")
 		}
 	} else if (f.inPmBad) {
@@ -262,6 +268,10 @@ def evaluate() {
 		cause = STATES.indexOf(applied.state) < STATES.indexOf(target) ? "Minimum run" : "Minimum off"   // STATES runs On → Off
 	}
 
+	// Stage 2: during a VOC-driven run, the indoor sensor checks the outdoor air
+	def trial = checkVocTrial(applied.state, cause, inVoc, p)
+	if (trial) { reason = "${reason} — ${trial}"; if (cause == "Indoor VOC high") cause = "Testing outdoor air" }
+
 	def current = state.current
 	if (applied.state != current) {
 		log.info "ERV Auto: ${current ?: '—'} → ${applied.state} (${reason})"
@@ -276,6 +286,56 @@ def evaluate() {
 	enforce(applied.state)
 	updateStatusDevice()
 }
+
+// ── Outdoor VOC check (stage 2) ───────────────────────────────────────────────
+// A VOC index is relative to its own sensor's last ~24 h, so indoor and outdoor indices can't be
+// compared. Over minutes, though, one sensor's index follows real concentration changes. So when
+// the ERV runs because indoor VOC is high, indoor VOC should start falling; if it rises by
+// ervAutoVocTrialRise within ervAutoVocTrialMinutes, the incoming air is worse, and the
+// controller recirculates for ervAutoVocHoldoffMinutes before trying again.
+// Returns a status line while the check is running, else null.
+private String checkVocTrial(String applied, String cause, def inVoc, Map p) {
+	if (applied != "On" || inVoc == null || !(cause in ["Indoor VOC high", "Minimum run"])) {
+		if (applied != "On") state.remove("vocTrial")
+		return null
+	}
+	def t = state.vocTrial
+	if (t == null) {
+		if (cause != "Indoor VOC high") return null
+		t = [since: now(), voc: inVoc]
+		log.info "ERV Auto: ventilating for VOC; checking that indoor VOC falls (index ${fmt(inVoc)} now)"
+	}
+	if (t.done) { state.vocTrial = t; return null }
+	long trialMs = ((p.ervAutoVocTrialMinutes as BigDecimal) * 60000) as long
+	long age = now() - (t.since as Long)
+	def rise = inVoc - (t.voc as BigDecimal)
+	if (age < trialMs) {
+		state.vocTrial = t
+		return "testing outdoor air: indoor VOC index ${fmt(t.voc)} → ${fmt(inVoc)} after ${mins(age)} of ${mins(trialMs)} min " +
+			   "(outdoor air counts as worse if it rises ${fmt(p.ervAutoVocTrialRise)})"
+	}
+	t.done = true
+	state.vocTrial = t
+	if (rise >= p.ervAutoVocTrialRise) {
+		long holdMs = ((p.ervAutoVocHoldoffMinutes as BigDecimal) * 60000) as long
+		state.vocVeto = [until: now() + holdMs, from: t.voc, to: inVoc, minutes: mins(age)]
+		log.warn "ERV Auto: indoor VOC index rose ${fmt(t.voc)} → ${fmt(inVoc)} while ventilating; outdoor air is worse — recirculating for ${p.ervAutoVocHoldoffMinutes} min"
+		runIn(1, "evaluate")
+	} else {
+		state.lastVocTrial = [at: now(), from: t.voc, to: inVoc, passed: true]
+		log.info "ERV Auto: outdoor air check passed (indoor VOC index ${fmt(t.voc)} → ${fmt(inVoc)})"
+	}
+	return null
+}
+
+private boolean vocVetoActive() { state.vocVeto && now() < (state.vocVeto.until as Long) }
+
+private String vocVetoText() {
+	def v = state.vocVeto
+	"ventilating raised indoor VOC index ${fmt(v.from)} → ${fmt(v.to)} in ${v.minutes} min (retrying at ${hhmm(v.until as Long)})"
+}
+
+private String hhmm(Long t) { new Date(t).format("h:mm a", location.timeZone) }
 
 // Minimum run / minimum off per piece of equipment. Returns the state to apply and, if it
 // differs from the target, why. Equipment timing lives in state.equip: [erv|ah: [on, since]].
@@ -433,6 +493,33 @@ private Map worst(List devs, String attr) {
 	return best
 }
 
+// What the controller is doing and why, for the Status section
+private String thinkingHtml() {
+	boolean auto = autoSwitch?.currentValue("switch") == "on"
+	def lines = []
+	lines << "<b style='font-size:15px'>${equipmentStatus()}</b>" + (auto ? " — <b>${state.cause ?: '—'}</b>" : " — <b>Manual</b> (another ERV mode is selected; Auto is off)")
+	if (auto) lines << "${state.reason ?: '—'}"
+	lines << "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('MMM d h:mm a', location.timeZone) : '—'}"
+	def eq = state.equip ?: [:]
+	def minRun = param("ervAutoMinRunMinutes"), minOff = param("ervAutoMinOffMinutes")
+	def eqText = { String label, Map e ->
+		if (!e) return null
+		long age = now() - ((e.since ?: 0) as Long)
+		if (!e.since) return "${label} ${e.on ? 'running' : 'off'}"
+		e.on ? "${label} running ${mins(age)} min (minimum ${minRun})" : "${label} off ${mins(age)} min (minimum ${minOff})"
+	}
+	def eqLines = [eqText("ERV", eq.erv), eqText("Air handler", eq.ah)].findAll { it }
+	if (eqLines) lines << "<b>Equipment:</b> ${eqLines.join('; ')}"
+	def check
+	if (vocVetoActive()) check = "outdoor air proved worse — ${vocVetoText()}"
+	else if (state.vocTrial && !state.vocTrial.done) check = "testing now (started ${hhmm(state.vocTrial.since as Long)}, indoor VOC index ${fmt(state.vocTrial.voc)} at the start)"
+	else if (state.lastVocTrial) check = "last test passed at ${hhmm(state.lastVocTrial.at as Long)} (indoor VOC index ${fmt(state.lastVocTrial.from)} → ${fmt(state.lastVocTrial.to)})"
+	else check = "no test yet (runs during the first ${param('ervAutoVocTrialMinutes')} min of a VOC-driven run)"
+	lines << "<b>Outdoor air check:</b> ${check}"
+	lines << "<b>Monitors:</b> ${monitorStatus()}"
+	return lines.join("<br>")
+}
+
 // CO2 row: indoor worst vs outdoor, as ppm above outdoor
 private String co2Row(List inLive, List outLive, boolean bad) {
 	def m = worst(inLive, "carbonDioxide")
@@ -462,7 +549,7 @@ private String readingsTable() {
 		row("Indoor NOx index",      worst(inLive, "noxIndex"),      "ervAutoNoxHigh", "ervAutoNoxBuffer", f.inNoxBad as boolean),
 		row("Indoor PM2.5 (µg/m³)",  worst(inLive, "pm25"),          "ervAutoPm25High", "ervAutoPm25Buffer", f.inPmBad as boolean),
 		row("Outdoor PM2.5 (µg/m³)", worst(outLive, "pm25"),         "ervAutoOutdoorPm25High", "ervAutoOutdoorPm25Buffer", f.outPmBad as boolean),
-		row("Outdoor VOC index",     worst(outLive, "vocIndex"),     "ervAutoOutdoorVocHigh", "ervAutoOutdoorGasBuffer", f.outVocBad as boolean),
+		row("Outdoor VOC index (spike)", worst(outLive, "vocIndex"), "ervAutoOutdoorVocSpike", "ervAutoOutdoorGasBuffer", f.outVocBad as boolean),
 		row("Outdoor NOx index",     worst(outLive, "noxIndex"),     "ervAutoOutdoorNoxHigh", "ervAutoOutdoorGasBuffer", f.outNoxBad as boolean),
 	]
 	return "<table style='font-size:13px'><tr><th align=left>Reading</th><th align=left>Now${multi ? ' (worst)' : ''}</th>" +
