@@ -1,0 +1,74 @@
+Local patch to jtp10181 "Zooz ZSE44 Temperature Humidity XS Sensor" v1.2.0
+(Drivers/zooz/zooz-zse44-temp-humidity.groovy), installed on the hub as driver 789.
+Re-apply after any HPM/driver update until fixed upstream.
+
+1. getParamStoredMap() used evaluate() to read the configVals data value. The hub
+   sandbox now rejects it ("Unrestricted script compilation is not allowed"), so any
+   driver reload or hub reboot wiped every sensor's stored parameter values and
+   forced a full re-send on the next wake-up. Replaced with a plain parser.
+2. Firmware 2.40 (Guest Bathroom sensor) answers 200 when parameter #15 (hardware
+   humidity offset) is set to 100 (no offset); its readings show no +10% offset
+   (it tracks the 2.00-firmware master sensor within a few points). Treat that
+   answer as in sync instead of retrying on every wake-up.
+
+--- a/Drivers/zooz/zooz-zse44-temp-humidity.groovy
++++ b/Drivers/zooz/zooz-zse44-temp-humidity.groovy
+@@ -462,7 +462,7 @@
+ 		Integer paramVal = getParamValueAdj(param)
+ 		Integer storedVal = getParamStoredValue(param.num)
+ 
+-		if ((paramVal != null) && (state.resyncAll || (storedVal != paramVal))) {
++		if ((paramVal != null) && (state.resyncAll || !paramInSync(param, paramVal, storedVal))) {
+ 			logDebug "Changing ${param.name} - ${param.title} (#${param.num}) from ${storedVal} to ${paramVal}"
+ 			cmds += configSetGetCmd(param, paramVal)
+ 		}
+@@ -516,6 +516,14 @@
+ //These have to be added in after the fact or groovy complains
+ void fixParamsMap() {
+ 	paramsMap['settings'] = [fixed: true]
++}
++
++//Local patch (djkoser): firmware 2.40 answers 200 when parameter #15 (humidity offset) is set
++//to 100 (no offset), and its readings show no +10% offset. Treat that answer as in sync instead
++//of re-sending the parameter on every wake-up.
++boolean paramInSync(Map param, Integer paramVal, Integer storedVal) {
++	if (storedVal == paramVal) return true
++	return (param.name == "humidOffsetHw" && firmwareVersion >= 2.40 && paramVal == 100 && storedVal == 200)
+ }
+ 
+ Integer getParamValueAdj(Map param) {
+@@ -801,13 +809,24 @@
+ 	//device.updateDataValue("configVals", configsMap.inspect())
+ }
+ 
++//Local patch (djkoser): the hub sandbox now rejects evaluate() ("Unrestricted script compilation
++//is not allowed"), which wiped configVals whenever the driver reloaded. Parse "[2:10, 3:20]" directly.
++Map parseConfigVals(String str) {
++	TreeMap map = [:]
++	str?.replaceAll(/[\[\]\s]/, "")?.split(",")?.each { String kv ->
++		List p = kv.split(":") as List
++		if (p.size() == 2 && p[0].isInteger() && p[1].isInteger()) map[p[0] as Integer] = p[1] as Integer
++	}
++	return map
++}
++
+ Map getParamStoredMap() {
+ 	TreeMap configsMap = configsList[device.id]
+ 	if (configsMap == null) {
+ 		configsMap = [:]
+ 		if (device.getDataValue("configVals")) {
+ 			try {
+-				configsMap = evaluate(device.getDataValue("configVals"))
++				configsMap = parseConfigVals(device.getDataValue("configVals"))
+ 			}
+ 			catch(Exception e) {
+ 				logWarn("Clearing Invalid configVals: ${e}")
+@@ -1002,7 +1021,7 @@
+ Integer getPendingChanges() {
+ 	Integer configChanges = configParams.count { param ->
+ 		Integer paramVal = getParamValueAdj(param)
+-		((paramVal != null) && (paramVal != getParamStoredValue(param.num)))
++		((paramVal != null) && !paramInSync(param, paramVal, getParamStoredValue(param.num)))
+ 	}
+ 	Integer pendingAssocs = Math.ceil(getConfigureAssocsCmds()?.size()/2) ?: 0
+ 	return (!state.resyncAll ? (configChanges + pendingAssocs) : configChanges)
