@@ -309,17 +309,17 @@ class ErvAutoControllerSpec extends Specification {
         then:
         status.states.carbonDioxide == 672
         status.states.pm25 == 3
-        status.states.vocIndexBand == "200–224"
-        status.states.noxIndexBand == "1–24"
-        new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).size() == 20
-        new groovy.json.JsonSlurper().parseText(status.states.indexBandValues).last() == "475–500"
+        status.states.vocIndex == "203"
+        status.states.noxIndex == "1"
+        new groovy.json.JsonSlurper().parseText(status.states.indexValues).size() == 500
+        new groovy.json.JsonSlurper().parseText(status.states.indexValues).last() == "500"
         new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200 (clears ≤ 150)")
 
         when: "manual mode: readings still update"
         hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
         living.states.vocIndex = 260; hub.script.evaluate()
         then:
-        status.states.vocIndexBand == "250–274"
+        status.states.vocIndex == "260"
         status.states.ervCause == "Manual"
     }
 }

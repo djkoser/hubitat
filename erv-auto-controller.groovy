@@ -431,12 +431,12 @@ private String causeLabel(String key, Map p) {
 	}
 }
 
-// VOC/NOx index (1–500) in 25-point bands, for Google Home (which can't show an index as a number)
-@groovy.transform.Field static final List INDEX_BANDS = (0..19).collect { i -> "${i == 0 ? 1 : i * 25}–${i == 19 ? 500 : i * 25 + 24}".toString() }
-private String indexBand(def v) {
+// VOC/NOx index (1–500) as text for Google Home, which shows it as a mode value: every possible
+// value is listed in indexValues (Google has no unitless number slot)
+@groovy.transform.Field static final List INDEX_VALUES = (1..500).collect { it.toString() }
+private String indexText(def v) {
 	if (v == null) return null
-	int i = Math.min(19, Math.max(0, (int) (new BigDecimal(v.toString()).intValue() / 25)))
-	return INDEX_BANDS[i]
+	return Math.min(500, Math.max(1, new BigDecimal(v.toString()).setScale(0, BigDecimal.ROUND_HALF_UP).intValue())).toString()
 }
 
 // r = measure() readings (null when only the relays changed)
@@ -452,14 +452,14 @@ private void updateStatusDevice(Map r = null, Map p = null) {
 	if (dev.currentValue("ervStatus") != s) dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
 	boolean auto = autoSwitch?.currentValue("switch") == "on"
 	set("ervCauseValues", groovy.json.JsonOutput.toJson(CAUSES.collect { causeLabel(it, p) }))
-	set("indexBandValues", groovy.json.JsonOutput.toJson(INDEX_BANDS))
+	set("indexValues", groovy.json.JsonOutput.toJson(INDEX_VALUES))
 	set("ervCause", causeLabel(auto ? (state.cause ?: "Air good") : "Manual", p))
 	set("ervReason", auto ? (state.reason ?: "") : "manual ERV mode (Auto is off)")
 	if (r) {
 		set("carbonDioxide", r.inCo2M?.v, "ppm")
 		set("pm25", r.inPmM?.v, "µg/m³")
-		set("vocIndexBand", indexBand(r.inVocM?.v))
-		set("noxIndexBand", indexBand(r.inNoxM?.v))
+		set("vocIndex", indexText(r.inVocM?.v))
+		set("noxIndex", indexText(r.inNoxM?.v))
 	}
 }
 
