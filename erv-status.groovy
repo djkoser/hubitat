@@ -14,11 +14,9 @@ metadata {
 			   importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-status.groovy") {
 		capability "Sensor"
 		attribute "ervStatus", "enum", ["On", "Recirculate", "Off"]
-		attribute "ervRunning", "enum", ["true", "false"]
-		attribute "airHandlerRunning", "enum", ["true", "false"]
 		attribute "ervCause", "enum", ["Air good", "Indoor CO2 high", "Indoor VOC high", "Indoor NOx high", "Indoor PM2.5 high",
-		                               "CO2 critical", "Testing outdoor air", "Outdoor PM2.5 high", "Outdoor NOx high",
-		                               "Outdoor VOC spike", "Outdoor VOC confirmed", "Filtering particles",
+		                               "CO2 critical", "Outdoor PM2.5 high", "Outdoor NOx high",
+		                               "Outdoor VOC spike", "Filtering particles",
 		                               "Minimum run", "Minimum off", "Monitors offline", "Manual"]
 		attribute "ervReason", "string"
 	}

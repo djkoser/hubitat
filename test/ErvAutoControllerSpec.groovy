@@ -15,7 +15,7 @@ class ErvAutoControllerSpec extends Specification {
         hub = new AppHarness("erv-auto-controller.groovy",
             [autoSwitch: auto, indoor: [living, bedroom], outdoor: [outside], ervStopRelay: ervRelay, ahStopRelay: ahRelay,
              ervAutoMinRunMinutes: 30, ervAutoMinOffMinutes: 30, logEnable: false],
-            [ervAutoState: "", ervAutoReason: ""])
+            [:])
         [living, bedroom, outside].each { it.lastActivity = new Date(hub.clock) }
     }
 
@@ -32,8 +32,8 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "Off"
         !ervRuns() && !ahRuns()
-        hub.globals.ervAutoState == "Off"
-        hub.globals.ervAutoReason == "air good: CO2 over outdoor 230 ppm < 600 ppm (650 ppm in Master Bedroom vs 420 ppm outdoors), VOC index 100 < 250, NOx index 1 < 50, PM2.5 3 µg/m³ < 15 µg/m³"
+        hub.state.cause == "Air good"
+        hub.state.reason == "air good: CO2 over outdoor 230 ppm < 600 ppm (650 ppm in Master Bedroom vs 420 ppm outdoors), VOC index 100 < 250, NOx index 1 < 50, PM2.5 3 µg/m³ < 15 µg/m³"
     }
 
     def "ventilates for high CO2 in the worst room and names that room"() {
@@ -217,7 +217,6 @@ class ErvAutoControllerSpec extends Specification {
         when: hub.script.relayHandler(hub.event(ervRelay, "switch", "off"))
         then:
         status.states.ervStatus == "On"
-        status.states.ervRunning == "true" && status.states.airHandlerRunning == "true"
 
         when: "a second initialize doesn't create another device"
         hub.script.initialize()
@@ -279,36 +278,16 @@ class ErvAutoControllerSpec extends Specification {
         hub.state.cause == "Outdoor PM2.5 high"
     }
 
-    def "stage 2: indoor VOC rising while ventilating proves the outdoor air worse"() {
-        given: hub.settings.ervAutoVocHigh = 200; hub.script.initialize()
-        def status = hub.children.values().first()
-        living.states.vocIndex = 215; evaluate()
 
-        expect: "testing while the run is young"
-        hub.state.current == "On"
-        status.states.ervCause == "Testing outdoor air"
-        hub.state.reason.contains("testing outdoor air: indoor VOC index 215 → 215 after 0 of 15 min")
 
-        when: "indoor VOC climbs 25 in 15 minutes of ventilating"
-        living.states.vocIndex = 240; hub.advance(15 * 60); evaluate(); evaluate()
-        then: "recirculates at once (outdoor bad may stop the ERV inside its minimum run), and says why"
-        hub.state.current == "Recirculate"
-        status.states.ervCause == "Outdoor VOC confirmed"
-        hub.state.reason.contains("ventilating raised indoor VOC index 215 → 240 in 15 min (retrying at")
-
-        when: "after the holdoff it is allowed to try again"
-        hub.advance(61 * 60); evaluate()
-        then: hub.state.current == "On"
-    }
-
-    def "stage 2: indoor VOC falling while ventilating passes the test"() {
-        given: hub.settings.ervAutoVocHigh = 200
-        living.states.vocIndex = 230; evaluate()
-        when: living.states.vocIndex = 210; hub.advance(15 * 60); evaluate()
+    def "a monitor that stops updating counts as offline after the stale time"() {
+        given: evaluate()
+        when: "the outdoor monitor goes quiet for 16 minutes (the indoor ones keep reporting)"
+        hub.advance(16 * 60)
+        [living, bedroom].each { it.lastActivity = new Date(hub.clock) }
+        hub.script.evaluate()
         then:
-        hub.state.current == "On"
-        hub.state.lastVocTrial.passed
-        hub.state.cause == "Indoor VOC high"
-        hub.script.thinkingHtml().contains("last test passed at")
+        hub.state.cause == "Monitors offline"
+        hub.state.reason.startsWith("all outdoor monitors offline/stale (Outdoor)")
     }
 }
