@@ -30,6 +30,7 @@ class FakeDevice {
             case "on": case "off": states.switch = name; break
             case "open": states.valve = "open"; break
             case "close": states.valve = "closed"; break
+            case "sendEvent": states[a[0].name] = a[0].value; break
         }
         return null
     }

@@ -25,6 +25,7 @@ class AppHarness {
     List<String> logs = []                      // "level: message"
     List<Map> http = []                         // [method, callback, params, data]
     List<List> subscriptions = []
+    Map<String, FakeDevice> children = [:]      // child devices by DNI
     def script
 
     AppHarness(String file, Map settings, Map globals = [:]) {
@@ -57,6 +58,13 @@ class AppHarness {
             unsubscribe      : { Object[] a -> },
             asynchttpPost    : { Object[] a -> h.http << [method: "POST", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
             asynchttpGet     : { Object[] a -> h.http << [method: "GET", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
+            // Child devices are FakeDevices (in h.children) behind a ChildDeviceWrapper facade
+            getChildDevice   : { String dni -> h.children[dni] ? h.childWrapper(h.children[dni]) : null },
+            addChildDevice   : { Object[] a ->   // (namespace, typeName, dni, props)
+                def props = a.length > 3 ? a[3] : [:]
+                h.children[a[2]] = new FakeDevice(id: 900L + h.children.size(), displayName: props?.label ?: a[1])
+                h.childWrapper(h.children[a[2]])
+            },
         ]
         AppExecutor api = impl as AppExecutor
 
@@ -77,6 +85,13 @@ class AppHarness {
     Map event(FakeDevice dev, String name, String value, String type = null) {
         dev.states[name] = value
         [name: name, value: value, displayName: dev.displayName, deviceId: dev.id, device: dev, type: type]
+    }
+
+    def childWrapper(FakeDevice d) {
+        [currentValue: { Object[] a -> d.currentValue(a[0] as String) },
+         sendEvent   : { Map e -> d.sendEvent(e) },
+         getId       : { -> d.id },
+         getLabel    : { -> d.displayName }] as me.biocomp.hubitat_ci.api.common_api.ChildDeviceWrapper
     }
 
     void advance(long seconds) { clock += seconds * 1000L }

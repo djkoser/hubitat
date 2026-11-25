@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.16.1",
+  "version": "1.17.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -82,6 +82,13 @@
       "name": "AirGradient Local",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/airgradient-local.groovy",
+      "required": false
+    },
+    {
+      "id": "7f252258-fae5-46c7-bedf-cb01f691dbb9",
+      "name": "ERV Status",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-status.groovy",
       "required": false
     }
   ]

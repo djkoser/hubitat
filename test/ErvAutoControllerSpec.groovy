@@ -202,4 +202,25 @@ class ErvAutoControllerSpec extends Specification {
         !hub.settings.containsKey("ervAutoCo2High") && !hub.settings.containsKey("ervAutoMinDwellMinutes")
         !hub.state.containsKey("ventMs")
     }
+
+    def "a view-only status device follows the relays in every mode"() {
+        when: hub.script.initialize()
+        def status = hub.children.values().first()
+        then:
+        status.displayName == "ERV Status"
+        status.states.ervStatus == "Off"
+
+        when: "relays change from anywhere (manual modes, Auto)"
+        hub.script.relayHandler(hub.event(ahRelay, "switch", "off"))
+        then: status.states.ervStatus == "Recirculate"
+
+        when: hub.script.relayHandler(hub.event(ervRelay, "switch", "off"))
+        then:
+        status.states.ervStatus == "On"
+        status.states.ervRunning == "true" && status.states.airHandlerRunning == "true"
+
+        when: "a second initialize doesn't create another device"
+        hub.script.initialize()
+        then: hub.children.size() == 1
+    }
 }

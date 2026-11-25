@@ -31,6 +31,9 @@
  * Each "high" flag has hysteresis: it trips at the threshold and clears only once the value
  * drops below threshold minus its buffer.
  *
+ * Status device: a child "ERV Status" device (view only) shows On / Recirculate / Off from the
+ * two stop relays at all times, in any mode, for dashboards and Google Home.
+ *
  * Equipment protection (per piece of equipment, ERV and air handler): once started it runs at
  * least ervAutoMinRunMinutes, and once stopped it stays off at least ervAutoMinOffMinutes, so
  * it runs in long stretches instead of short-cycling. Exceptions: critical CO2 may start
@@ -138,6 +141,10 @@ def initialize() {
 		subscribe(outdoorDevs(), it, "sensorHandler")
 	}
 	runEvery1Minute("evaluate")
+	ensureStatusDevice()
+	subscribe(ervStopRelay, "switch", "relayHandler")
+	subscribe(ahStopRelay, "switch", "relayHandler")
+	updateStatusDevice()
 	evaluate()
 }
 
@@ -286,6 +293,39 @@ private String mins(long ms) { (ms / 60000).setScale(0, BigDecimal.ROUND_DOWN).t
 private BigDecimal outdoorCo2(List outLive, def fallback) {
 	def vals = outLive.collect { val(it, "carbonDioxide") }.findAll { it != null && it > 0 }
 	return vals ? (vals.sum() / vals.size()).setScale(0, BigDecimal.ROUND_HALF_UP) : new BigDecimal(fallback.toString())
+}
+
+// ── Status device ───────────────────────────────────────────────────────────
+
+private String statusDni() { "erv-status-${app.id}" }
+
+private void ensureStatusDevice() {
+	if (getChildDevice(statusDni())) return
+	try {
+		addChildDevice("djkoser", "ERV Status", statusDni(), [label: "ERV Status", isComponent: false])
+		log.info "ERV Auto: created the ERV Status device"
+	} catch (e) {
+		log.warn "ERV Auto: couldn't create the ERV Status device (is the ERV Status driver installed?): ${e.message}"
+	}
+}
+
+def relayHandler(evt) { updateStatusDevice() }
+
+// What the equipment is doing, from the normally-closed stop relays (relay off = runs)
+private String equipmentStatus() {
+	boolean erv = ervStopRelay.currentValue("switch") == "off"
+	boolean ah = ahStopRelay.currentValue("switch") == "off"
+	return erv ? "On" : (ah ? "Recirculate" : "Off")
+}
+
+private void updateStatusDevice() {
+	def dev = getChildDevice(statusDni())
+	if (!dev) return
+	def s = equipmentStatus()
+	if (dev.currentValue("ervStatus") != s)
+		dev.sendEvent(name: "ervStatus", value: s, descriptionText: "ERV is ${s}")
+	dev.sendEvent(name: "ervRunning", value: (ervStopRelay.currentValue("switch") == "off").toString())
+	dev.sendEvent(name: "airHandlerRunning", value: (ahStopRelay.currentValue("switch") == "off").toString())
 }
 
 // Set relays for a state. Order keeps the air handler running whenever the ERV runs.
