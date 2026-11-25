@@ -19,7 +19,7 @@ class SafetyMonitorSpec extends Specification {
         [locks: [front, garage], doors: [frontDoor], cancelSwitch: cancel, sirenSwitch: null,
          smokeDetectors: null, coDetectors: null, leakSensors: [leak], waterValve: valve,
          notifiers: [david], speakers: [speaker], camerasEnabled: true, cameras: [cam],
-         nvrIpAddress: null, reolinkUsername: null, reolinkPassword: null, cameraChannels: null, logEnable: false]
+         alertDetections: ["person", "vehicle"], logEnable: false]
     }
 
     def setup() {
@@ -139,28 +139,7 @@ class SafetyMonitorSpec extends Specification {
         hub.logsMatching("not a valid 24-hour HH:mm")
     }
 
-    def "camera channels come from the comma-separated setting"() {
-        when: hub.settings.cameraChannels = "0, 1,x, 4"
-        then: hub.script.channels() == [0, 1, 4]
-        when: hub.settings.camerasEnabled = false
-        then: hub.script.channels() == []
-    }
 
-    def "arming turns camera email alerts on with one batched NVR login"() {
-        given:
-        hub.settings.nvrIpAddress = "192.168.86.20"
-        hub.settings.reolinkUsername = "admin"
-        hub.settings.reolinkPassword = "secret"
-        hub.settings.cameraChannels = "0,1"
-
-        when: hub.script.armIfAllLocked()
-
-        then:
-        hub.http.size() == 1
-        hub.http[0].params.uri == "https://192.168.86.20/cgi-bin/api.cgi?cmd=Login"
-        !hub.http[0].params.uri.contains("secret")          // credentials go in the body, not the URL
-        hub.http[0].data.body.contains('"cmd":"SetEmailV20"')
-    }
 
     def "device health trusts the driver's healthStatus, and falls back to silence without one"() {
         given:
@@ -181,23 +160,36 @@ class SafetyMonitorSpec extends Specification {
         then: hub.state.unhealthy.containsKey("281")
     }
 
-    def "carries timings, NVR login and camera channels over from the old hub variables"() {
-        given:
-        def s = baseSettings() + [cameraChannelVars: "drivewayCameraChannel,southCameraChannel",
-                                  safetyArmDelayMinutes: null, safetyArmReminderTime: null]
-        def h = new AppHarness("safety-monitor.groovy", s,
-            [safetyArmDelayMinutes: "5", safetyArmReminderTime: "21:30", nvrIpAddress: "192.168.86.20",
-             reolinkUsername: "admin", reolinkPassword: "secret", drivewayCameraChannel: 0, southCameraChannel: 1])
 
-        when: h.script.migrateFromHubVariables()
+    def "while armed, a person detection is texted, then throttled per camera"() {
+        given: hub.script.armIfAllLocked(); david.calls.clear()
+        def porch = new FakeDevice(id: 342, displayName: "Porch (SE)")
 
-        then:
-        h.settings.safetyArmDelayMinutes == 5
-        h.settings.safetyArmReminderTime == "21:30"
-        h.settings.nvrIpAddress == "192.168.86.20"
-        h.settings.reolinkPassword == "secret"
-        h.settings.cameraChannels == "0,1"
-        !h.settings.containsKey("cameraChannelVars")
-        !h.logs.any { it.contains("secret") }             // never logs the password
+        when: hub.script.cameraDetectionHandler(hub.event(cam, "person", "active"))
+        then: texts().size() == 1 && texts()[0].startsWith("Person detected at Driveway (SW) while armed (")
+
+        when: "the same camera again within the cooldown"
+        hub.advance(60); hub.script.cameraDetectionHandler(hub.event(cam, "vehicle", "active"))
+        then: texts().size() == 1
+
+        when: "another camera is texted independently"
+        hub.script.cameraDetectionHandler(hub.event(porch, "vehicle", "active"))
+        then: texts().last().startsWith("Vehicle detected at Porch (SE)")
+
+        when: "after the cooldown"
+        hub.advance(61); hub.script.cameraDetectionHandler(hub.event(cam, "person", "active"))
+        then: texts().size() == 3
+    }
+
+    def "detections are ignored while disarmed and when they clear"() {
+        when: hub.script.cameraDetectionHandler(hub.event(cam, "person", "active"))
+        then: texts().isEmpty()
+        when: hub.script.armIfAllLocked(); hub.script.cameraDetectionHandler(hub.event(cam, "person", "inactive"))
+        then: texts().isEmpty()
+    }
+
+    def "subscribes only to the chosen detection types"() {
+        when: hub.settings.alertDetections = ["person", "package", "bogus"]; hub.script.initialize()
+        then: hub.subscriptions.findAll { it[2] == "cameraDetectionHandler" }.collect { it[1] } as Set == ["person", "package"] as Set
     }
 }
