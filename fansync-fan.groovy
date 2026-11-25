@@ -96,8 +96,8 @@ def off() {
 }
 
 def setLevel(def level, def duration = null) {
-	if ((level as Integer) <= 0) { off(); return }
-	def pct = snapSpeed(clamp(level as Integer, 1, 100))
+	if (toInt(level) <= 0) { off(); return }
+	def pct = snapSpeed(clamp(toInt(level), 1, 100))
 	if (!parent.componentSet(device, ["H00": 1, "H01": 0, "H02": pct])) return
 	sendEvent(name: "level", value: pct, unit: "%", descriptionText: "${device.displayName} level is ${pct}%")
 }
@@ -155,7 +155,7 @@ def lightOff() {
 }
 
 def setLightLevel(def level) {
-	def pct = clamp(level as Integer, 1, 100)
+	def pct = clamp(toInt(level), 1, 100)
 	if (!parent.componentSet(device, ["H0B": 1, "H0C": pct])) return
 	sendEvent(name: "lightLevel", value: pct, unit: "%", descriptionText: "${device.displayName} light level is ${pct}%")
 	sendEvent(name: "lightSwitch", value: "on", descriptionText: "${device.displayName} light is on")
@@ -263,6 +263,9 @@ private int snapSpeed(int pct) {
 	def p = speedPresets()
 	return p ? (p.min { Math.abs(it - pct) } as int) : pct
 }
+
+// Commands may arrive as numbers or strings (e.g. "50.0" from a dashboard)
+private int toInt(v) { new BigDecimal(v.toString().trim()).setScale(0, BigDecimal.ROUND_HALF_UP).intValue() }
 
 private int clamp(int value, int min, int max) {
 	return Math.max(min, Math.min(max, value))

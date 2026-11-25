@@ -63,7 +63,7 @@ def off() {
 }
 
 def setLevel(def level, def duration = null) {
-	def pct = level as Integer
+	def pct = toInt(level)
 	if (pct <= 0) { off(); return }
 	if (!levelKey()) { on(); return }   // on/off-only light
 	pct = clamp(pct, 1, 100)
@@ -78,9 +78,9 @@ def setColorTemperature(def temp, def level = null, def duration = null) {
 		if (level != null) setLevel(level)
 		return
 	}
-	def k = snapCct(temp as Integer)
+	def k = snapCct(toInt(temp))
 	def keys = [(powerKey()): 1, (cctKey()): k]
-	if (level != null && levelKey() && (level as Integer) > 0) keys[levelKey()] = clamp(level as Integer, 1, 100)
+	if (level != null && levelKey() && toInt(level) > 0) keys[levelKey()] = clamp(toInt(level), 1, 100)
 	if (!send(keys)) return
 	sendCct(k)
 	if (keys[levelKey()] != null) sendEvent(name: "level", value: keys[levelKey()], unit: "%")
@@ -173,3 +173,6 @@ private void sendCct(int k) {
 }
 
 private int clamp(int value, int min, int max) { Math.max(min, Math.min(max, value)) }
+
+// Commands may arrive as numbers or strings (e.g. "3500.0" from a dashboard)
+private int toInt(v) { new BigDecimal(v.toString().trim()).setScale(0, BigDecimal.ROUND_HALF_UP).intValue() }
