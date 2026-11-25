@@ -31,8 +31,9 @@
  * value drops below threshold minus its buffer. A state is held for a minimum dwell
  * time before it may change (except for fail-safe and critical CO2).
  *
- * Every tunable lives in a hub variable (Settings > Hub Variables). A missing
- * variable falls back to the default below and is flagged on the app page.
+ * Thresholds and timings are this app's own settings (the Thresholds section of its page).
+ * Its state and reason are published to the hub variables ervAutoState / ervAutoReason, if
+ * they exist, for dashboards and other apps.
  */
 
 definition(
@@ -48,7 +49,8 @@ definition(
 
 preferences { page(name: "mainPage") }
 
-// name: [type, default, description]
+// Settings: name: [type, default, description]. Names match the hub variables they
+// replaced (before Nov 2026), so migrateFromHubVariables() can carry old values over.
 @groovy.transform.Field static final Map PARAMS = [
 	ervAutoCo2High:            ["Number", 1000, "Indoor CO2 (ppm) that triggers ventilation"],
 	ervAutoCo2Buffer:          ["Number", 150,  "CO2 must fall this far below the threshold to clear"],
@@ -71,7 +73,7 @@ preferences { page(name: "mainPage") }
 	ervAutoIdleState:          ["String", "Off", "State when air is good: Off, Recirculate or On"],
 	ervAutoFailSafeState:      ["String", "On",  "State when a sensor is offline: On, Recirculate or Off"],
 ]
-// Outputs written by the app (create them as String hub variables to see them on dashboards)
+// Outputs published for other apps/dashboards (create them as String hub variables to use them)
 @groovy.transform.Field static final List OUTPUTS = ["ervAutoState", "ervAutoReason"]
 @groovy.transform.Field static final List STATES = ["On", "Recirculate", "Off"]
 
@@ -93,13 +95,11 @@ def mainPage() {
 						  "<b>Monitors:</b> ${monitorStatus()}"
 			}
 		}
-		section("Thresholds (hub variables)") {
-			def rows = PARAMS.collect { n, d ->
-				def gv = getGlobalVar(n)
-				"<tr><td>${n}</td><td>${gv != null ? gv.value : "<span style='color:#c00'>missing — using ${d[1]}</span>"}</td><td>${d[2]}</td></tr>"
-			}.join("")
-			paragraph "<table style='font-size:12px'><tr><th align=left>Variable</th><th align=left>Value</th><th align=left>Meaning</th></tr>${rows}</table>" +
-					  "<br>Edit values in Settings &gt; Hub Variables; changes apply immediately."
+		section("Thresholds") {
+			PARAMS.each { n, d ->
+				if (d[0] == "String") input n, "enum", title: d[2], options: STATES, defaultValue: d[1], required: false
+				else input n, d[0] == "Decimal" ? "decimal" : "number", title: d[2], defaultValue: d[1], required: false
+			}
 		}
 		section("Logging") {
 			input "logEnable", "bool", title: "Debug logging (auto-off after 30 min)", defaultValue: false
@@ -113,17 +113,31 @@ def installed() { initialize() }
 def updated()   { unsubscribe(); unschedule(); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
+// One-time carry-over of settings that lived in hub variables before Nov 2026: any setting
+// still unset takes the old hub variable's value. Safe to delete once every install has run it.
+private void migrateFromHubVariables() {
+	PARAMS.each { n, d ->
+		if (settings[n] != null) return
+		def gv = getGlobalVar(n)
+		if (gv?.value == null || gv.value.toString() == "") return
+		def type = d[0] == "String" ? "enum" : (d[0] == "Decimal" ? "decimal" : "number")
+		def value = d[0] == "String" ? gv.value.toString() : (d[0] == "Decimal" ? new BigDecimal(gv.value.toString()) : (gv.value.toString() as BigDecimal).intValue())
+		app.updateSetting(n, [type: type, value: value])
+		log.info "ERV Auto: moved setting ${n} = ${value} from its hub variable into the app"
+	}
+}
+
 def initialize() {
 	if (logEnable) runIn(1800, "logsOff")
 	state.flags = state.flags ?: [:]
+	migrateFromHubVariables()
 	removeAllInUseGlobalVar()
-	addInUseGlobalVar((PARAMS.keySet() as List) + OUTPUTS)
+	addInUseGlobalVar(OUTPUTS)
 	subscribe(autoSwitch, "switch", "autoSwitchHandler")
 	["pm25", "carbonDioxide", "vocIndex", "noxIndex", "healthStatus", "lastUpdate"].each {
 		subscribe(indoorDevs(), it, "sensorHandler")
 		subscribe(outdoorDevs(), it, "sensorHandler")
 	}
-	PARAMS.keySet().each { subscribe(location, "variable:${it}", "paramHandler") }
 	runEvery1Minute("evaluate")
 	evaluate()
 }
@@ -145,8 +159,6 @@ def sensorHandler(evt) {
 	}
 	evaluate()
 }
-
-def paramHandler(evt) { evaluate() }
 
 // ── Decision ─────────────────────────────────────────────────────────────────
 
@@ -335,12 +347,12 @@ private val(dev, String attr) {
 }
 
 private param(String name) {
-	def gv = getGlobalVar(name)
 	def d = PARAMS[name]
-	if (gv == null || gv.value == null || gv.value.toString() == "") return d[1] instanceof String ? d[1] : new BigDecimal(d[1].toString())
-	if (d[0] == "String") return gv.value.toString().trim()
-	try { return new BigDecimal(gv.value.toString()) } catch (e) {
-		log.warn "Hub variable ${name}='${gv.value}' is not a number; using ${d[1]}"
+	def v = settings[name]
+	if (v == null || v.toString() == "") return d[1] instanceof String ? d[1] : new BigDecimal(d[1].toString())
+	if (d[0] == "String") return v.toString().trim()
+	try { return new BigDecimal(v.toString()) } catch (e) {
+		log.warn "ERV Auto: setting ${name}='${v}' is not a number; using ${d[1]}"
 		return new BigDecimal(d[1].toString())
 	}
 }

@@ -24,13 +24,14 @@
  *   - Any monitored device that reports offline, or has been silent for
  *     safetySensorStaleHours, is texted once (and again when it recovers).
  *
- * Tunables are hub variables (Settings > Hub Variables); a missing one falls back to its
- * default and is flagged on the app page.
+ * Timings and the NVR connection are this app's own settings (its Settings and Cameras
+ * sections). It publishes intrusionMonitoringEnabled and safetyStatus to hub variables of
+ * those names, if they exist, for dashboards and other apps.
  *
  * Spotlights and sirens use the camera devices from Hubitat's built-in Reolink Integration
  * (setSpotlight / setSiren). Camera email alerts are not exposed by that integration, so they
- * are set directly on the NVR over HTTPS with a token login, using hub variables
- * nvrIpAddress / reolinkUsername / reolinkPassword and the per-camera channel variables.
+ * are set directly on the NVR over HTTPS with a token login (NVR address, login and channel
+ * numbers in the Cameras section).
  */
 
 import groovy.json.JsonOutput
@@ -42,19 +43,27 @@ definition(
 	description: "Lock-armed intrusion monitoring, smoke/CO/leak alerts with valve shutoff, and device health",
 	category: "Safety & Security",
 	iconUrl: "", iconX2Url: "",
-	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/safety-monitor.groovy"
+	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/safety-monitor.groovy",
+	singleThreaded: true   // simultaneous door/sensor events update shared alert state
 )
 
 preferences { page(name: "mainPage") }
 
-// name: [type, default, description]
+// Settings: name: [type, default, description]. Names match the hub variables they
+// replaced (before Nov 2026), so migrateFromHubVariables() can carry old values over.
 @groovy.transform.Field static final Map PARAMS = [
 	safetyArmDelayMinutes:  ["Number", 2,       "Minutes all locks must stay locked before arming"],
-	safetyArmReminderTime:  ["String", "22:00", "Time (HH:mm) to announce if not armed; blank = off"],
+	safetyArmReminderTime:  ["String", "22:00", "Time (HH:mm, 24-hour) to announce if not armed; \"off\" disables"],
 	safetySensorStaleHours: ["Number", 26,      "Hours of silence before a device is reported offline"],
 	ttsStopDelay:           ["Number", 10,      "Seconds before speakers are stopped after an announcement"],
 	safetyRepeatSeconds:    ["Number", 30,      "Seconds between repeated alert announcements; 0 = announce once"],
 	safetyRepeatCount:      ["Number", 10,      "Times an active alert is repeated; 0 = until cancelled or cleared"],
+]
+// NVR connection settings (also carried over from hub variables)
+@groovy.transform.Field static final Map NVR_SETTINGS = [
+	nvrIpAddress:    ["text",     "NVR IP address or hostname (HTTPS must be enabled on the NVR)"],
+	reolinkUsername: ["text",     "NVR username"],
+	reolinkPassword: ["password", "NVR password"],
 ]
 @groovy.transform.Field static final List OUTPUTS = ["intrusionMonitoringEnabled", "safetyStatus"]
 
@@ -79,8 +88,8 @@ def mainPage() {
 			input "camerasEnabled", "bool", title: "Use cameras (spotlights, sirens, email alerts)", defaultValue: true
 			input "cameras", "capability.motionSensor", title: "Reolink cameras (spotlight + siren when a door opens while armed)", multiple: true, required: false
 			input "sirenSwitch", "capability.switch", title: "Sirens switch (on/off sounds or stops every camera siren)", required: false
-			input "cameraChannelVars", "text", title: "Hub variables holding camera channel numbers (comma-separated)",
-				  defaultValue: "drivewayCameraChannel,southCameraChannel,southeastCameraChannel,northeastCameraChannel,northwestCameraChannel"
+			NVR_SETTINGS.each { n, d -> input n, d[0], title: d[1], required: false }
+			input "cameraChannels", "text", title: "NVR channels for email alerts (comma-separated, e.g. 0,1,2,3,4)", required: false
 		}
 		if (app.id) {
 			section("Status") {
@@ -91,12 +100,8 @@ def mainPage() {
 						  "<b>Unhealthy devices:</b> ${(state.unhealthy ?: [:]).values().join(', ') ?: 'none'}"
 			}
 		}
-		section("Settings (hub variables)") {
-			def rows = PARAMS.collect { n, d ->
-				def gv = getGlobalVar(n)
-				"<tr><td>${n}</td><td>${gv != null ? gv.value : "<span style='color:#c00'>missing — using ${d[1]}</span>"}</td><td>${d[2]}</td></tr>"
-			}.join("")
-			paragraph "<table style='font-size:12px'><tr><th align=left>Variable</th><th align=left>Value</th><th align=left>Meaning</th></tr>${rows}</table>"
+		section("Settings") {
+			PARAMS.each { n, d -> input n, d[0] == "String" ? "text" : "number", title: d[2], defaultValue: d[1], required: false }
 		}
 		section("Logging") {
 			input "logEnable", "bool", title: "Debug logging (auto-off after 30 min)", defaultValue: false
@@ -110,11 +115,37 @@ def installed() { initialize() }
 def updated()   { unsubscribe(); unschedule(); state.remove("reolinkAuthFailed"); state.remove("reolinkToken"); initialize() }
 def uninstalled() { removeAllInUseGlobalVar() }
 
+// One-time carry-over of settings that lived in hub variables before Nov 2026: any setting
+// still unset takes the old hub variable's value. Safe to delete once every install has run it.
+private void migrateFromHubVariables() {
+	def gvText = { String n -> def gv = getGlobalVar(n); gv?.value != null ? gv.value.toString().trim() : "" }
+	PARAMS.each { n, d ->
+		if (settings[n] != null || !gvText(n)) return
+		def v = gvText(n)
+		app.updateSetting(n, d[0] == "String" ? [type: "text", value: v] : [type: "number", value: (v as BigDecimal).intValue()])
+		log.info "Safety Monitor: moved setting ${n} from its hub variable into the app"
+	}
+	NVR_SETTINGS.each { n, d ->
+		if (settings[n] != null || !gvText(n)) return
+		app.updateSetting(n, [type: d[0], value: gvText(n)])
+		log.info "Safety Monitor: moved setting ${n} from its hub variable into the app"
+	}
+	// Channels used to be named hub variables listed in cameraChannelVars
+	if (settings.cameraChannels == null && settings.cameraChannelVars) {
+		def chans = settings.cameraChannelVars.split(",").collect { gvText(it.trim()) }.findAll { it.isInteger() }
+		if (chans) {
+			app.updateSetting("cameraChannels", [type: "text", value: chans.join(",")])
+			log.info "Safety Monitor: moved camera channels ${chans.join(',')} from hub variables into the app"
+		}
+		app.removeSetting("cameraChannelVars")
+	}
+}
+
 def initialize() {
 	if (logEnable) runIn(1800, "logsOff")
+	migrateFromHubVariables()
 	removeAllInUseGlobalVar()
-	def cams = channelVarNames()
-	addInUseGlobalVar((PARAMS.keySet() as List) + OUTPUTS + cams + ["nvrIpAddress", "reolinkUsername", "reolinkPassword"])
+	addInUseGlobalVar(OUTPUTS)
 	state.unhealthy = state.unhealthy ?: [:]
 
 	subscribe(locks, "lock", "lockHandler")
@@ -125,7 +156,6 @@ def initialize() {
 	if (coDetectors) subscribe(coDetectors, "carbonMonoxide", "coHandler")
 	if (leakSensors) subscribe(leakSensors, "water", "leakHandler")
 	allMonitored().each { subscribe(it, "healthStatus", "healthEventHandler") }
-	subscribe(location, "variable:safetyArmReminderTime", "reminderTimeChanged")
 
 	runEvery1Hour("healthCheck")
 	scheduleReminder()
@@ -212,15 +242,13 @@ def armReminder() {
 	if (parts) speak("Intrusion monitoring is not armed. ${parts.join('. ')}.")
 }
 
-def reminderTimeChanged(evt) { scheduleReminder() }
-
 private void scheduleReminder() {
 	unschedule("armReminder")
 	def t = paramString("safetyArmReminderTime")
-	if (!t) return
-	def m = (t =~ /^(\d{1,2}):(\d{2})$/)
-	if (!m.matches()) { log.warn "safetyArmReminderTime '${t}' is not HH:mm"; return }
-	schedule("0 ${m[0][2] as Integer} ${m[0][1] as Integer} ? * *", "armReminder")
+	if (!t || t.equalsIgnoreCase("off")) return
+	def hm = parseHhMm(t)
+	if (!hm) { log.warn "Safety Monitor: reminder time '${t}' is not a valid 24-hour HH:mm (or \"off\")"; return }
+	schedule("0 ${hm[1]} ${hm[0]} ? * *", "armReminder")
 }
 
 // ── Environmental ────────────────────────────────────────────────────────────
@@ -354,16 +382,11 @@ private void cameraEmailAlerts(boolean on) {
 
 private List channels() {
 	if (camerasEnabled == false) return []
-	channelVarNames().collect { n ->
-		def gv = getGlobalVar(n)
-		if (gv?.value != null && gv.value.toString().isInteger()) return gv.value.toString() as Integer
-		log.warn "Camera channel variable ${n} is missing or not a number"
+	(cameraChannels ?: "").split(",").collect { it.trim() }.findAll { it }.collect { c ->
+		if (c.isInteger()) return c as Integer
+		log.warn "Safety Monitor: camera channel '${c}' is not a number"
 		return null
 	}.findAll { it != null }
-}
-
-private List channelVarNames() {
-	(cameraChannelVars ?: "").split(",").collect { it.trim() }.findAll { it }
 }
 
 // The NVR locks the account after repeated failed logins, so after one failed login
@@ -371,17 +394,17 @@ private List channelVarNames() {
 private void reolink(List commands) {
 	if (!commands) return
 	if (state.reolinkAuthFailed) { log.warn "NVR calls paused after a failed login; fix the credentials and click Done in the app"; return }
-	if (!getGlobalVar("nvrIpAddress")?.value) { log.warn "Hub variable nvrIpAddress is not set"; return }
+	if (!nvrIpAddress) { log.warn "Safety Monitor: NVR IP address is not set (Cameras section)"; return }
 	def body = JsonOutput.toJson(commands)
 	if (state.reolinkToken && now() < ((state.reolinkTokenExpires ?: 0) as Long)) sendNvr(body, false)
 	else nvrLogin(body)
 }
 
 private void nvrLogin(String pendingBody, boolean retried = false) {
-	def user = getGlobalVar("reolinkUsername")?.value
-	def pass = getGlobalVar("reolinkPassword")?.value
-	if (!user || pass == null) { log.warn "Hub variables reolinkUsername / reolinkPassword are not set"; return }
-	asynchttpPost("nvrLoginResponse", [uri: "https://${getGlobalVar('nvrIpAddress').value}/cgi-bin/api.cgi?cmd=Login",
+	def user = reolinkUsername
+	def pass = reolinkPassword
+	if (!user || pass == null) { log.warn "Safety Monitor: NVR username/password are not set (Cameras section)"; return }
+	asynchttpPost("nvrLoginResponse", [uri: "https://${nvrIpAddress}/cgi-bin/api.cgi?cmd=Login",
 		ignoreSSLIssues: true, requestContentType: "application/json", contentType: "application/json", timeout: 15,
 		body: JsonOutput.toJson([[cmd: "Login", param: [User: [Version: "0", userName: user, password: pass]]]])],
 		[body: pendingBody, retried: retried])
@@ -403,7 +426,7 @@ def nvrLoginResponse(resp, data) {
 }
 
 private void sendNvr(String body, boolean retried) {
-	asynchttpPost("nvrResponse", [uri: "https://${getGlobalVar('nvrIpAddress').value}/cgi-bin/api.cgi?token=${state.reolinkToken}",
+	asynchttpPost("nvrResponse", [uri: "https://${nvrIpAddress}/cgi-bin/api.cgi?token=${state.reolinkToken}",
 		ignoreSSLIssues: true, requestContentType: "application/json", contentType: "application/json", timeout: 15,
 		body: body], [body: body, retried: retried])
 }
@@ -449,18 +472,25 @@ private boolean anyUnlocked() { locks.any { it.currentValue("lock") != "locked" 
 private String unlockedNames() { locks.findAll { it.currentValue("lock") != "locked" }*.displayName.join(", ") }
 private String openDoorNames() { doors.findAll { it.currentValue("contact") == "open" }*.displayName.join(", ") }
 private int armDelaySeconds() { Math.max(((param("safetyArmDelayMinutes") as BigDecimal) * 60) as Integer, 1) }
+// "HH:mm" (24-hour) -> [hour, minute], or null if malformed/out of range
+private List parseHhMm(String t) {
+	def m = (t =~ /^(\d{1,2}):(\d{2})$/)
+	if (!m.matches()) return null
+	int h = m[0][1] as Integer, mi = m[0][2] as Integer
+	return (h <= 23 && mi <= 59) ? [h, mi] : null
+}
 private String nowText() { new Date().format("MMM d h:mm a", location.timeZone) }
 
 private param(String name) {
-	def gv = getGlobalVar(name)
 	def d = PARAMS[name]
-	if (gv == null || gv.value == null || gv.value.toString() == "") return d[1] instanceof String ? d[1] : new BigDecimal(d[1].toString())
-	if (d[0] == "String") return gv.value.toString().trim()
-	try { return new BigDecimal(gv.value.toString()) } catch (e) { return new BigDecimal(d[1].toString()) }
+	def v = settings[name]
+	if (v == null || v.toString() == "") return d[1] instanceof String ? d[1] : new BigDecimal(d[1].toString())
+	if (d[0] == "String") return v.toString().trim()
+	try { return new BigDecimal(v.toString()) } catch (e) { return new BigDecimal(d[1].toString()) }
 }
 
+// Text setting as entered; unset = default, explicitly blank = "" (e.g. reminder off)
 private String paramString(String name) {
-	def gv = getGlobalVar(name)
-	if (gv == null) return PARAMS[name][1]
-	return gv.value?.toString()?.trim() ?: ""
+	def v = settings[name]
+	return v == null ? PARAMS[name][1] : v.toString().trim()
 }

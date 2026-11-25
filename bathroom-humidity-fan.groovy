@@ -23,7 +23,7 @@
  * the load), so the app alternates the LED mode On/Off and then restores the chosen
  * normal mode. For a ZEN30, pick the ZEN30 itself as the LED device and "Relay".
  *
- * Tunables are hub variables shared by all instances (Settings > Hub Variables).
+ * Thresholds and timings are per-bathroom settings on each instance's page.
  */
 
 definition(
@@ -33,12 +33,13 @@ definition(
 	description: "Runs a bathroom fan from humidity relative to a reference sensor, refuses off while humid, blinks the switch LED",
 	category: "Convenience",
 	iconUrl: "", iconX2Url: "",
-	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/bathroom-humidity-fan.groovy"
+	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/bathroom-humidity-fan.groovy",
+	singleThreaded: true   // both sensors and the switch can report at once
 )
 
 preferences { page(name: "mainPage") }
 
-// name: [default, description]
+// Settings: name: [default, description]
 @groovy.transform.Field static final Map PARAMS = [
 	bathFanStartDelta:      [10, "%RH above the reference that turns the fan on"],
 	bathFanStopDelta:       [3,  "%RH above the reference at which the fan may turn off"],
@@ -68,12 +69,8 @@ def mainPage() {
 						  "<b>State:</b> ${stateText()}"
 			}
 		}
-		section("Settings (hub variables, shared by all bathrooms)") {
-			def rows = PARAMS.collect { n, d ->
-				def gv = getGlobalVar(n)
-				"<tr><td>${n}</td><td>${gv != null ? gv.value : "<span style='color:#c00'>missing — using ${d[0]}</span>"}</td><td>${d[1]}</td></tr>"
-			}.join("")
-			paragraph "<table style='font-size:12px'><tr><th align=left>Variable</th><th align=left>Value</th><th align=left>Meaning</th></tr>${rows}</table>"
+		section("Settings") {
+			PARAMS.each { n, d -> input n, "number", title: d[1], defaultValue: d[0], required: false }
 		}
 		section("Logging") {
 			input "logEnable", "bool", title: "Debug logging (auto-off after 30 min)", defaultValue: false
@@ -85,12 +82,10 @@ def mainPage() {
 
 def installed() { initialize() }
 def updated()   { unsubscribe(); unschedule(); initialize() }
-def uninstalled() { removeAllInUseGlobalVar() }
+def uninstalled() { }
 
 def initialize() {
 	if (logEnable) runIn(1800, "logsOff")
-	removeAllInUseGlobalVar()
-	addInUseGlobalVar(PARAMS.keySet() as List)
 	subscribe(bathSensor, "humidity", "humidityHandler")
 	subscribe(refSensor, "humidity", "humidityHandler")
 	subscribe(fan, "switch", "fanHandler")
@@ -105,7 +100,8 @@ def logsOff() { app.updateSetting("logEnable", [value: "false", type: "bool"]) }
 // state.override   – user forced it off; leave the fan alone until dry
 // state.expired    – time limit reached; leave the fan alone until dry
 // state.refusedAt  – last refused off (for the double-press override)
-// state.ignoreUntil – ignore our own switch events until this time
+// state.expect     – [value, until]: the switch event our own on()/off() will produce, ignored
+//                    so the app doesn't react to itself (an opposite event is still handled)
 
 private BigDecimal delta() {
 	def b = num(bathSensor?.currentValue("humidity"))
@@ -148,7 +144,8 @@ def evaluate() {
 }
 
 def fanHandler(evt) {
-	if (state.ignoreUntil && now() < (state.ignoreUntil as Long)) return
+	def ex = state.expect
+	if (ex && evt.value == ex.value && now() < (ex.until as Long)) { state.remove("expect"); return }
 	if (evt.value != "off") return
 	if (!humid() || state.override || state.expired) {
 		state.holding = false
@@ -185,8 +182,8 @@ def timeLimit() {
 	fanOff()
 }
 
-private void fanOn()  { state.ignoreUntil = now() + 3000; fan.on() }
-private void fanOff() { state.ignoreUntil = now() + 3000; fan.off() }
+private void fanOn()  { state.expect = [value: "on",  until: now() + 5000]; fan.on() }
+private void fanOff() { state.expect = [value: "off", until: now() + 5000]; fan.off() }
 
 // ── LED blink ────────────────────────────────────────────────────────────────
 
@@ -219,8 +216,8 @@ private String stateText() {
 }
 
 private BigDecimal param(String name) {
-	def gv = getGlobalVar(name)
-	try { if (gv?.value != null && gv.value.toString() != "") return new BigDecimal(gv.value.toString()) } catch (e) { }
+	def v = settings[name]
+	try { if (v != null && v.toString() != "") return new BigDecimal(v.toString()) } catch (e) { }
 	return new BigDecimal(PARAMS[name][0].toString())
 }
 
