@@ -1,49 +1,40 @@
-# Hubitat Private Applications Repository
+# Hubitat Apps & Drivers
 
-This repository serves as a centralized location for my private Hubitat Elevation applications and integrations.
+Private Hubitat Elevation apps and drivers, installed through Hubitat Package Manager (HPM)
+from `packageManifest.json` (repository listing: `repository.json`).
 
-## Purpose
+## Apps
 
-This repository is designed to:
-- House custom Hubitat applications and device drivers
-- Maintain version control for personal Hubitat automation projects
-- Provide a structured approach to managing Hubitat package manifests
-- Store documentation and configuration files for Hubitat integrations
+- **Safety Monitor** - HSM replacement. Arms when every lock has stayed locked for a set time, disarms on any unlock; a door opening while armed texts, announces (repeating until cancelled) and turns on camera spotlights and sirens. Smoke, CO and leak alerts at all times, with main water valve shutoff on a leak. Offline-device alerts and a nightly "not armed" reminder. Cameras run through Hubitat's built-in Reolink Integration; camera email alerts are set on the NVR over HTTPS.
+- **ERV Auto Controller** - Runs an ERV and air handler as On / Recirculate / Off from any number of indoor and outdoor air monitors (CO2, VOC, NOx, PM2.5): the worst room decides, offline monitors are skipped, with hysteresis, minimum dwell and a fail-safe when a whole side goes offline. Publishes its state to the `ervAutoState` / `ervAutoReason` hub variables.
+- **Bathroom Humidity Fan** - One instance per bathroom. Runs the exhaust fan from humidity relative to a reference sensor; refuses an off while it's still humid (with an LED blink on the switch), a double press forces it off, and a time limit applies.
+- **Enhanced Battery Monitor** - Notifies once per device each time its battery crosses a threshold (very high, high, medium, low, critical).
 
-## Repository Structure
+Each app keeps its own settings on its own page. Hub variables are used only for values shared
+across apps or dashboards (the published outputs above).
 
-- `packageManifest.json` - Package manifest file for Hubitat Package Manager integration
-- `battery-monitor.groovy` - Enhanced Battery Monitor application
-- Additional applications and drivers will be organized in dedicated folders
+## Drivers
 
-## Current Applications
+- **FanSync Controller / FanSync Fan / FanSync Light** - Fanimation FanSync cloud integration. The controller reads Fanimation's information model (`/api:1/info-model`) and sets each device up from its model: fixed speed presets, breeze mode (speed "auto"), direction, Home Shield, fault codes, and a separate light device per light (e.g. TorchAire down and up lights) with dimming and color-temperature presets.
+- **AirGradient Local** - Polls AirGradient ONE / Open Air monitors over the local API and reports corrected PM2.5, temperature and humidity, plus CO2, VOC/NOx indices and US AQI; sets AirGradient's recommended corrections on the monitor.
+- **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 five-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press).
 
-- **Enhanced Battery Monitor** - Advanced battery monitoring application with configurable thresholds and intelligent notifications that sends alerts when devices cross battery level boundaries (high→medium→low)
-- **Bathroom Humidity Fan** - Runs a bathroom exhaust fan from humidity relative to a reference sensor; refuses off (paddle or remote) while humid with an LED blink, double press to force off, time limit; one instance per bathroom
-- **Safety Monitor** - HSM replacement: arms when all locks are locked, disarms on any unlock, alerts (text, announcement, Reolink spotlights/sirens) on doors opened while armed; smoke/CO/leak alerts with main water valve shutoff; offline-device alerts
-- **ERV Auto Controller** - Runs an ERV and air handler as On / Recirculate / Off from indoor and outdoor air quality (CO2, VOC, NOx, PM2.5), with hysteresis, minimum dwell and a stale-sensor fail-safe. All thresholds are hub variables
+## Build checks and tests
 
-## Current Drivers
+```
+./gradlew test
+```
 
-- **FanSync Controller / FanSync Fan / FanSync Light** - Parent/child cloud drivers for Fanimation FanSync fans and lights, built to Fanimation's information model: fan speed, direction, breeze mode, Home Shield, fault codes; light on/off, dimming and color temperature (3000/4000/5000 K) as a separate light device, detected per model
-- **AirGradient Local** - Polls AirGradient ONE / Open Air monitors over the local API and reports corrected PM2.5, temperature and humidity; can set the recommended corrections on the monitor
-- **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 5-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press)
+- **Compile checks** (`test/CompileSpec.groovy`) - every `.groovy` file at the repo root is compiled inside [hubitat_ci](https://github.com/biocomp/hubitat_ci)'s emulated Hubitat sandbox (no threads, exec, reflection, custom classes, `println`), apps' definitions and pages are validated, and every import is checked against the hub's class allowlist (`test/support/ImportPolicy.groovy`). New files are picked up automatically.
+- **Unit tests** (`test/*Spec.groovy`, Spock) - the apps' decision logic and the drivers' protocol handling, run against fake devices and a fake hub (`test/support`). Fixtures in `test/fixtures` are captured from real devices and Fanimation's cloud.
+- **CI** - `.github/workflows/build.yml` runs the same on every push and pull request.
 
-## Installation
+Requirements: a JDK 17+ to run Gradle, and JDK 11 for the tests (hubitat_ci 0.17 needs Groovy 2.5,
+which doesn't run on JDK 16+). Point Gradle at the JDK 11 install, e.g. in `~/.gradle/gradle.properties`:
 
-Applications in this repository can be installed via:
-1. Hubitat Package Manager (HPM) using the package manifest
-2. Manual installation by copying code directly to your Hubitat hub
-3. Direct import using raw GitHub URLs
+```
+org.gradle.java.installations.paths=/opt/homebrew/opt/openjdk@11
+```
 
-## Usage
-
-Each application will include its own documentation with installation instructions, configuration details, and usage examples.
-
-## Author
-
-David Koser
-
----
-
-*This is a private repository for personal Hubitat development and automation projects.*
+hubitat_ci (2021) predates some current Hubitat features, so a few of its checks are relaxed or
+shimmed; each is documented at the top of `test/CompileSpec.groovy`.

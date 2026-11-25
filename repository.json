@@ -7,7 +7,7 @@
       "name": "David Koser's Hubitat Apps & Drivers",
       "category": "Convenience",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/packageManifest.json",
-      "description": "A collection of Hubitat apps and drivers: Enhanced Battery Monitor (threshold-crossing battery notifications) and FanSync Controller + FanSync Fan (parent/child cloud drivers for Fanimation FanSync fans with light and direction control).",
+      "description": "Safety Monitor (HSM replacement with cameras and leak shutoff), ERV Auto Controller (air-quality ventilation), Bathroom Humidity Fan, Enhanced Battery Monitor; drivers for Fanimation FanSync fans and lights, AirGradient monitors and the IKEA E1810 remote.",
       "tags": [
         "Climate Control",
         "Cloud",
