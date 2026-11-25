@@ -119,6 +119,18 @@ class ErvAutoControllerSpec extends Specification {
         then: hub.state.current == "On"
     }
 
+    def "the fail-safe starts equipment inside its minimum off time, then holds the minimum run"() {
+        given: living.states.carbonDioxide = 1100; evaluate(); hub.advance(31 * 60)
+        living.states.carbonDioxide = 600; evaluate()          // Off
+        when: living.states.healthStatus = "offline"; bedroom.states.healthStatus = "offline"; hub.advance(60); evaluate()
+        then: hub.state.current == "On"
+        when: "monitors return with good air"
+        living.states.healthStatus = "online"; bedroom.states.healthStatus = "online"; hub.advance(5 * 60); evaluate()
+        then: hub.state.current == "On"
+        when: hub.advance(26 * 60); evaluate()
+        then: hub.state.current == "Off"
+    }
+
     def "a PM2.5 run is held for the minimum run too"() {
         given: "PM2.5 high, outdoor cleaner: ventilating"
         living.states.pm25 = 20; evaluate()

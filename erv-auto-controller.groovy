@@ -34,8 +34,9 @@
  * Equipment protection (per piece of equipment, ERV and air handler): once started it runs at
  * least ervAutoMinRunMinutes, and once stopped it stays off at least ervAutoMinOffMinutes, so
  * it runs in long stretches instead of short-cycling. Exceptions: critical CO2 may start
- * equipment early, and the ERV stops immediately when outdoor air turns bad (the air handler
- * keeps recirculating).
+ * equipment early, the fail-safe starts it immediately (it then runs continuously, so it adds
+ * no cycling), and the ERV stops immediately when outdoor air turns bad (the air handler keeps
+ * recirculating). Minimum run time still applies when the monitors come back.
  *
  * Thresholds and timings are this app's own settings (the Thresholds section of its page).
  * Its state and reason are published to the hub variables ervAutoState / ervAutoReason, if
@@ -196,7 +197,7 @@ def evaluate() {
 	boolean protect = false   // may stop the ERV during its minimum run time (outdoor air bad)
 
 	if (!inLive || !outLive) {
-		target = stateParam(p.ervAutoFailSafeState, "On")
+		target = stateParam(p.ervAutoFailSafeState, "On"); urgent = true
 		reason = "${!inLive ? 'all indoor' : 'all outdoor'} monitors offline/stale (${stale*.displayName.join(', ')})"
 	} else if (inCo2 != null && inCo2 >= p.ervAutoCo2Critical) {
 		target = "On"; urgent = true
