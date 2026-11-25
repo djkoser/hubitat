@@ -33,7 +33,7 @@ class ErvAutoControllerSpec extends Specification {
         evaluate() == "Off"
         !ervRuns() && !ahRuns()
         hub.globals.ervAutoState == "Off"
-        hub.globals.ervAutoReason == "air good"
+        hub.globals.ervAutoReason == "air good: CO2 over outdoor 230 < 600 (650 in Master Bedroom vs 420), VOC 100 < 250, NOx 1 < 50, PM2.5 3 < 15"
     }
 
     def "ventilates for high CO2 in the worst room and names that room"() {
@@ -41,7 +41,7 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "On"
         ervRuns() && ahRuns()
-        hub.state.reason == "indoor CO2 1100 (Master Bedroom) (680 above outdoor) high"
+        hub.state.reason == "indoor CO2 over outdoor 680 ≥ 600 (1100 in Master Bedroom vs 420); outdoor VOC 100 < 250, NOx 1 < 50"
     }
 
     def "turns the air handler on before the ERV"() {
@@ -97,7 +97,7 @@ class ErvAutoControllerSpec extends Specification {
         when: hub.advance(29 * 60); evaluate()
         then:
         hub.state.current == "On" && ervRuns()
-        hub.state.reason == "air good — holding On: ERV ran 29 of 30 min, air handler ran 29 of 30 min"
+        hub.state.reason.endsWith("— holding On: ERV ran 29 of 30 min, air handler ran 29 of 30 min")
         when: hub.advance(61); evaluate()
         then: hub.state.current == "Off" && !ervRuns() && !ahRuns()
     }
@@ -154,7 +154,7 @@ class ErvAutoControllerSpec extends Specification {
         bedroom.states.carbonDioxide = 2000      // would be critical if it counted
         expect:
         evaluate() == "Off"
-        hub.state.reason == "air good (ignoring offline: Master Bedroom)"
+        hub.state.reason.startsWith("air good: ") && hub.state.reason.endsWith("(ignoring offline: Master Bedroom)")
     }
 
     def "fail-safe only when every indoor monitor is offline"() {
@@ -234,7 +234,7 @@ class ErvAutoControllerSpec extends Specification {
         then:
         status.states.ervStatus == "Recirculate"
         status.states.ervCause == "Outdoor VOC high"
-        status.states.ervReason == "indoor VOC 215 (Living Room) high but outdoor gases bad (VOC 271, NOx 1)"
+        status.states.ervReason == "indoor VOC 215 ≥ 200 (Living Room), but outdoor VOC 271 ≥ 250, NOx 1 < 50"
 
         when: "air clears inside its minimum run"
         living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
@@ -256,5 +256,12 @@ class ErvAutoControllerSpec extends Specification {
         then:
         status.states.ervCause == "Manual"
         status.states.ervReason == "manual ERV mode (Auto is off)"
+    }
+
+    def "the reason shows a flag that is still clearing against its clear level"() {
+        given: hub.settings.ervAutoVocHigh = 200
+        living.states.vocIndex = 215; evaluate()
+        when: living.states.vocIndex = 180; hub.advance(60); evaluate()
+        then: hub.state.reason.startsWith("indoor VOC 180 (high until ≤ 150) (Living Room); outdoor VOC 100 < 250")
     }
 }
