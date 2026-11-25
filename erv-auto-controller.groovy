@@ -497,7 +497,7 @@ private Map worst(List devs, String attr) {
 private String thinkingHtml() {
 	boolean auto = autoSwitch?.currentValue("switch") == "on"
 	def lines = []
-	lines << "<b style='font-size:15px'>${equipmentStatus()}</b>" + (auto ? " — <b>${state.cause ?: '—'}</b>" : " — <b>Manual</b> (another ERV mode is selected; Auto is off)")
+	lines << "<b style='font-size:15px'>${auto ? (state.current ?: equipmentStatus()) : equipmentStatus()}</b>" + (auto ? " — <b>${state.cause ?: '—'}</b>" : " — <b>Manual</b> (another ERV mode is selected; Auto is off)")
 	if (auto) lines << "${state.reason ?: '—'}"
 	lines << "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('MMM d h:mm a', location.timeZone) : '—'}"
 	def eq = state.equip ?: [:]
