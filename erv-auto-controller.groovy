@@ -42,7 +42,8 @@ definition(
 	description: "Ventilate, recirculate or idle an ERV + air handler from indoor/outdoor air quality",
 	category: "Convenience",
 	iconUrl: "", iconX2Url: "",
-	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-auto-controller.groovy"
+	importUrl: "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-auto-controller.groovy",
+	singleThreaded: true   // several monitors report at once; evaluate one event at a time
 )
 
 preferences { page(name: "mainPage") }
