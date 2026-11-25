@@ -135,4 +135,37 @@ class BathroomHumidityFanSpec extends Specification {
         when: hub.script.blinkStep()
         then: parent.calls == [["setLEDMode", "Relay", "Default"]]
     }
+
+    def "a fast rise starts the fan before the full start delta"() {
+        given: humidity(42)                      // 2% above reference
+        when: hub.advance(120); humidity(45); hub.advance(60); humidity(47)   // +5 in 3 min, 7% above
+        then:
+        fan.commandNames() == ["on"]
+        hub.state.holding
+        hub.logsMatching("rose 5")
+    }
+
+    def "a slow rise does not trigger it"() {
+        given: humidity(42)
+        when: [43, 44, 45, 46, 47].each { hub.advance(180); humidity(it) }
+        then: fan.calls.isEmpty()
+    }
+
+    def "a fast rise while still within the stop delta does not start the fan"() {
+        given: ref.states.humidity = 50; humidity(40)
+        when: hub.advance(60); humidity(46)      // +6, but still below the reference
+        then: fan.calls.isEmpty()
+    }
+
+    def "a rise setting of 0 turns the trigger off"() {
+        given: hub.settings.bathFanRiseDelta = 0; humidity(42)
+        when: hub.advance(60); humidity(48)
+        then: fan.calls.isEmpty()
+    }
+
+    def "a fan started by a fast rise turns off when dry"() {
+        given: humidity(42); hub.advance(60); humidity(48); echoOwnCommand(); fan.calls.clear()
+        when: hub.advance(600); humidity(43)
+        then: fan.commandNames() == ["off"]
+    }
 }

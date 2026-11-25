@@ -5,6 +5,9 @@
  * (e.g. the AirGradient indoor monitor). The difference ("delta", in %RH) drives the fan:
  *
  *   - Auto on:   delta rises to bathFanStartDelta or more and the fan is off -> fan on.
+ *   - Fast rise: bathroom humidity climbs bathFanRiseDelta or more within bathFanRiseMinutes
+ *                (a shower starting) while delta is above bathFanStopDelta -> fan on, without
+ *                waiting for the full start delta. Set the rise to 0 to turn this off.
  *   - Hold on:   while delta is above bathFanStopDelta, an "off" (paddle or remote) is
  *                refused: the fan comes straight back on, and for paddle presses the
  *                switch's LED blinks to show the press was heard.
@@ -43,6 +46,8 @@ preferences { page(name: "mainPage") }
 @groovy.transform.Field static final Map PARAMS = [
 	bathFanStartDelta:      [10, "%RH above the reference that turns the fan on"],
 	bathFanStopDelta:       [3,  "%RH above the reference at which the fan may turn off"],
+	bathFanRiseDelta:       [5,  "%RH rise in the bathroom that turns the fan on early (0 = off)"],
+	bathFanRiseMinutes:     [5,  "Minutes over which that rise is measured"],
 	bathFanMaxMinutes:      [60, "Minutes after which the app stops holding/auto-running the fan"],
 	bathFanOverrideSeconds: [10, "A second off within this many seconds forces the fan off"],
 	bathFanLedBlinks:       [3,  "LED blinks when an off is refused"],
@@ -65,7 +70,8 @@ def mainPage() {
 			section("Status") {
 				def d = delta()
 				paragraph "<b>Bathroom:</b> ${num(bathSensor?.currentValue('humidity')) ?: '—'}%  <b>Reference:</b> ${num(refSensor?.currentValue('humidity')) ?: '—'}%  " +
-						  "<b>Delta:</b> ${d != null ? d.setScale(1, BigDecimal.ROUND_HALF_UP) + '%' : 'unavailable'}<br>" +
+						  "<b>Delta:</b> ${d != null ? d.setScale(1, BigDecimal.ROUND_HALF_UP) + '%' : 'unavailable'}  " +
+							  "<b>Rise (${param('bathFanRiseMinutes')} min):</b> ${rise() != null ? rise().setScale(1, BigDecimal.ROUND_HALF_UP) + '%' : '—'}<br>" +
 						  "<b>State:</b> ${stateText()}"
 			}
 		}
@@ -100,6 +106,7 @@ def logsOff() { app.updateSetting("logEnable", [value: "false", type: "bool"]) }
 // state.override   – user forced it off; leave the fan alone until dry
 // state.expired    – time limit reached; leave the fan alone until dry
 // state.refusedAt  – last refused off (for the double-press override)
+// state.rh         – recent bathroom readings [[time, %RH], ...] for the rate-of-rise trigger
 // state.expect     – [value, until]: the switch event our own on()/off() will produce, ignored
 //                    so the app doesn't react to itself (an opposite event is still handled)
 
@@ -115,7 +122,31 @@ private boolean humid() { def d = delta(); d != null && d > param("bathFanStopDe
 
 def humidityHandler(evt) { evaluate() }
 
+// Bathroom readings over the rise window, plus the last one before it (the value at the
+// window's start, since sensors report on change)
+private void recordHumidity() {
+	def v = num(bathSensor?.currentValue("humidity"))
+	if (v == null) return
+	long t = now()
+	long cutoff = t - ((param("bathFanRiseMinutes") * 60000) as Long)
+	def rh = (state.rh ?: []) + [[t, v]]
+	def before = rh.findAll { (it[0] as Long) <= cutoff }
+	rh = (before ? [before.last()] : []) + rh.findAll { (it[0] as Long) > cutoff }
+	state.rh = rh
+}
+
+// How far the bathroom has risen over the window: current reading minus the lowest
+// reading in it (including the value at its start)
+private BigDecimal rise() {
+	def rh = state.rh
+	if (!rh || rh.size() < 2) return null
+	def cur = num(rh.last()[1])
+	def low = rh.collect { num(it[1]) }.min()
+	return cur - low
+}
+
 def evaluate() {
+	recordHumidity()
 	def d = delta()
 	if (logEnable) log.debug "${app.label}: delta=${d} holding=${state.holding} override=${state.override} expired=${state.expired}"
 	if (d == null) {
@@ -136,11 +167,18 @@ def evaluate() {
 		unschedule("timeLimit")
 		return
 	}
-	if (d >= param("bathFanStartDelta") && !state.override && !state.expired && fan.currentValue("switch") != "on") {
+	if (state.override || state.expired || fan.currentValue("switch") == "on") return
+	if (d >= param("bathFanStartDelta")) {
 		log.info "${app.label}: humidity ${d.setScale(1, BigDecimal.ROUND_HALF_UP)}% above reference; fan on"
-		startHolding()
-		fanOn()
+	} else {
+		def r = rise()
+		def riseDelta = param("bathFanRiseDelta")
+		if (riseDelta <= 0 || r == null || r < riseDelta) return
+		log.info "${app.label}: humidity rose ${r.setScale(1, BigDecimal.ROUND_HALF_UP)}% in ${param('bathFanRiseMinutes')} min " +
+				 "(${d.setScale(1, BigDecimal.ROUND_HALF_UP)}% above reference); fan on"
 	}
+	startHolding()
+	fanOn()
 }
 
 def fanHandler(evt) {
