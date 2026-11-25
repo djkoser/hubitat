@@ -33,7 +33,7 @@ class ErvAutoControllerSpec extends Specification {
         evaluate() == "Off"
         !ervRuns() && !ahRuns()
         hub.state.cause == "Air good"
-        hub.state.reason == "air good: CO2 over outdoor 230 ppm < 600 ppm (650 ppm in Master Bedroom vs 420 ppm outdoors), VOC index 100 < 250, NOx index 1 < 50, PM2.5 3 µg/m³ < 15 µg/m³"
+        hub.state.reason == "air good: CO2 over outdoor 230 ppm < 600 ppm (650 ppm in Master Bedroom vs 420 ppm outdoors), VOC index 100 < 200, NOx index 1 < 100, PM2.5 3 µg/m³ < 15 µg/m³"
     }
 
     def "ventilates for high CO2 in the worst room and names that room"() {
@@ -41,7 +41,7 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "On"
         ervRuns() && ahRuns()
-        hub.state.reason == "indoor CO2 over outdoor 680 ppm ≥ 600 ppm (1100 ppm in Master Bedroom vs 420 ppm outdoors); outdoor PM2.5 4 µg/m³ < 35 µg/m³, NOx index 1 < 50, VOC index 100 < 400"
+        hub.state.reason == "indoor CO2 over outdoor 680 ppm ≥ 600 ppm (1100 ppm in Master Bedroom vs 420 ppm outdoors); outdoor PM2.5 4 µg/m³ < 35 µg/m³, NOx index 1 < 100, VOC index 100 < 400"
     }
 
     def "turns the air handler on before the ERV"() {
@@ -55,7 +55,7 @@ class ErvAutoControllerSpec extends Specification {
     def "recirculates instead when outdoor gases are bad"() {
         given:
         living.states.vocIndex = 300
-        outside.states.noxIndex = 80
+        outside.states.noxIndex = 150
         expect:
         evaluate() == "Recirculate"
         ahRuns() && !ervRuns()
@@ -289,5 +289,15 @@ class ErvAutoControllerSpec extends Specification {
         then:
         hub.state.cause == "Monitors offline"
         hub.state.reason.startsWith("all outdoor monitors offline/stale (Outdoor)")
+    }
+
+    def "every setting explains its default with a citation that exists"() {
+        given:
+        def params = hub.script.PARAMS
+        def refs = hub.script.REFERENCES
+        expect:
+        params.every { n, d -> d.size() == 4 && d[3].startsWith("Default ") && d[3] =~ /\[\d+\]/ }
+        params.values().collectMany { d -> (d[3] =~ /\[(\d+)\]/).collect { it[1] as Integer } }.every { refs.containsKey(it) }
+        refs.values().every { it[1].startsWith("https://") }
     }
 }
