@@ -40,6 +40,8 @@ metadata {
 		attribute "healthStatus",   "enum", ["online", "offline", "unknown"]
 		attribute "lastUpdate",     "string"
 		attribute "pm25Correction", "string"
+		attribute "airQualityDescriptive", "enum", ["healthy", "moderate", "unhealthy for sensitive groups",
+		                                             "unhealthy", "very unhealthy", "hazardous"]   // EPA AQI category (Google's names)
 		attribute "model",          "string"
 		attribute "firmware",       "string"
 		attribute "serial",         "string"
@@ -122,7 +124,9 @@ def pollResponse(resp, data) {
 	def pm25   = pmCorr != null ? pmCorr : pmRaw
 	if (pm25 != null) {
 		send("pm25", round1(pm25), "µg/m³")
-		send("airQualityIndex", aqi(pm25), "AQI")
+		def idx = aqi(pm25)
+		send("airQualityIndex", idx, "AQI")
+		send("airQualityDescriptive", aqiCategory(idx), null)
 	}
 	if (pmRaw != null) send("pm25Raw", round1(pmRaw), "µg/m³")
 	if (num(j.pm01) != null) send("pm01", round1(num(j.pm01)), "µg/m³")
@@ -232,6 +236,12 @@ private num(v) {
 }
 
 private round1(v) { (v as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP) }
+
+// EPA AQI category, using the names Google Home's AirQuality sensor state expects
+private String aqiCategory(int idx) {
+	idx <= 50 ? "healthy" : idx <= 100 ? "moderate" : idx <= 150 ? "unhealthy for sensitive groups" :
+	idx <= 200 ? "unhealthy" : idx <= 300 ? "very unhealthy" : "hazardous"
+}
 
 // US EPA AQI for PM2.5 (2024 breakpoints)
 private int aqi(pm) {

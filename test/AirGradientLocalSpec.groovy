@@ -38,9 +38,24 @@ class AirGradientLocalSpec extends Specification {
         h.last("temperature") == 71.4    // 21.91 °C -> °F
         h.last("carbonDioxide") == 572
         h.last("airQualityIndex") == 20
+        h.last("airQualityDescriptive") == "healthy"
         h.last("healthStatus") == "online"
         h.last("model") == "I-9PSL"
         h.last("lastUpdate") != null
+    }
+
+    @Unroll
+    def "AQI #idx is category '#category'"() {
+        expect: ag().script.aqiCategory(idx) == category
+        where:
+        idx | category
+        0   | "healthy"
+        50  | "healthy"
+        51  | "moderate"
+        101 | "unhealthy for sensitive groups"
+        151 | "unhealthy"
+        201 | "very unhealthy"
+        301 | "hazardous"
     }
 
     def "marks the monitor offline only after the configured number of failed polls"() {
