@@ -162,6 +162,25 @@ class SafetyMonitorSpec extends Specification {
         hub.http[0].data.body.contains('"cmd":"SetEmailV20"')
     }
 
+    def "device health trusts the driver's healthStatus, and falls back to silence without one"() {
+        given:
+        def old = new Date(hub.clock - 90L * 24 * 3600 * 1000)          // 90 days ago
+        def smokeRelay = new FakeDevice(id: 281, displayName: "Fire Alarm Sensor", states: [smoke: "clear", healthStatus: "online"], lastActivity: old)
+        hub.settings.smokeDetectors = [smokeRelay]
+        leak.lastActivity = old                                           // no healthStatus attribute
+        [front, garage, frontDoor, valve].each { it.lastActivity = new Date(hub.clock) }
+
+        when: hub.script.healthCheck()
+
+        then:
+        hub.state.unhealthy.keySet() == ["108"] as Set
+        texts().size() == 1
+        texts()[0].startsWith("Northwest Water Sensor appears offline (no activity since Aug 26 ")
+
+        when: smokeRelay.states.healthStatus = "offline"; hub.script.healthCheck()
+        then: hub.state.unhealthy.containsKey("281")
+    }
+
     def "carries timings, NVR login and camera channels over from the old hub variables"() {
         given:
         def s = baseSettings() + [cameraChannelVars: "drivewayCameraChannel,southCameraChannel",

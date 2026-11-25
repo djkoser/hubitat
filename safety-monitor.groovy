@@ -21,8 +21,8 @@
  * safetyRepeatCount times (0 = until cleared). The cancel switch acknowledges all of them.
  *
  * Device health
- *   - Any monitored device that reports offline, or has been silent for
- *     safetySensorStaleHours, is texted once (and again when it recovers).
+ *   - A monitored device is texted once when it goes offline (and again when it recovers):
+ *     its driver's healthStatus if it reports one, otherwise safetySensorStaleHours of silence.
  *
  * Timings and the NVR connection are this app's own settings (its Settings and Cameras
  * sections). It publishes intrusionMonitoringEnabled and safetyStatus to hub variables of
@@ -338,9 +338,12 @@ def healthCheck() {
 	def unhealthy = state.unhealthy ?: [:]
 	allMonitored().each { dev ->
 		def key = dev.id.toString()
-		def offline = dev.currentValue("healthStatus") == "offline"
+		// Trust the driver's own health check when it has one: event-only devices (e.g. a smoke
+		// alarm relay) can be silent for months and still be fine. Otherwise use silence.
+		def health = dev.currentValue("healthStatus")
+		def offline = health == "offline"
 		def last = dev.getLastActivity()
-		def stale = last != null && (now() - last.time) > staleMs
+		def stale = health == null && last != null && (now() - last.time) > staleMs
 		if (offline || stale) {
 			if (!unhealthy.containsKey(key)) {
 				unhealthy[key] = dev.displayName
