@@ -91,8 +91,7 @@ def mainPage() {
 				paragraph "<b>Auto:</b> ${autoSwitch?.currentValue('switch') == 'on' ? 'active' : 'inactive (another mode is selected)'}<br>" +
 						  "<b>State:</b> ${state.current ?: '—'} &nbsp; <b>Reason:</b> ${state.reason ?: '—'}<br>" +
 						  "<b>Since:</b> ${state.lastChange ? new Date(state.lastChange as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : '—'}<br>" +
-						  "<b>Flags:</b> ${state.flags ?: [:]}<br>" +
-						  "<b>Monitors:</b> ${monitorStatus()}"
+						  "<b>Monitors:</b> ${monitorStatus()}<br><br>" + readingsTable()
 			}
 		}
 		section("Thresholds") {
@@ -334,6 +333,33 @@ private Map worst(List devs, String attr) {
 		if (v != null && (best == null || v > best.v)) best = [v: v, name: d.displayName]
 	}
 	return best
+}
+
+// Current reading vs trigger/clear levels for each input, for the status section
+private String readingsTable() {
+	def staleMs = (param("ervAutoStaleMinutes") as BigDecimal) * 60000
+	def inLive  = indoorDevs().findAll { !isStale(it, staleMs) }
+	def outLive = outdoorDevs().findAll { !isStale(it, staleMs) }
+	def f = state.flags ?: [:]
+	boolean multi = indoorDevs().size() > 1 || outdoorDevs().size() > 1
+	def cell = { Map m -> m ? "${m.v}${multi ? " <small>(${m.name})</small>" : ''}" : "—" }
+	def row = { String label, Map m, String high, String buffer, boolean bad ->
+		def hi = param(high), clear = param(high) - param(buffer)
+		"<tr><td>${label}</td><td>${cell(m)}</td><td>≥ ${hi}</td><td>≤ ${clear}</td>" +
+		"<td>${bad ? "<b style='color:#c00'>high</b>" : 'ok'}</td></tr>"
+	}
+	def rows = [
+		row("Indoor CO₂ (ppm)",      worst(inLive, "carbonDioxide"), "ervAutoCo2High", "ervAutoCo2Buffer", f.inCo2Bad as boolean),
+		row("Indoor VOC index",      worst(inLive, "vocIndex"),      "ervAutoVocHigh", "ervAutoVocBuffer", f.inVocBad as boolean),
+		row("Indoor NOx index",      worst(inLive, "noxIndex"),      "ervAutoNoxHigh", "ervAutoNoxBuffer", f.inNoxBad as boolean),
+		row("Indoor PM2.5 (µg/m³)",  worst(inLive, "pm25"),          "ervAutoPm25High", "ervAutoPm25Buffer", f.inPmBad as boolean),
+		row("Outdoor PM2.5 (µg/m³)", worst(outLive, "pm25"),         "ervAutoOutdoorPm25High", "ervAutoOutdoorPm25Buffer", f.outPmBad as boolean),
+		row("Outdoor VOC index",     worst(outLive, "vocIndex"),     "ervAutoOutdoorVocHigh", "ervAutoOutdoorGasBuffer", f.outVocBad as boolean),
+		row("Outdoor NOx index",     worst(outLive, "noxIndex"),     "ervAutoOutdoorNoxHigh", "ervAutoOutdoorGasBuffer", f.outNoxBad as boolean),
+	]
+	return "<table style='font-size:13px'><tr><th align=left>Reading</th><th align=left>Now${multi ? ' (worst)' : ''}</th>" +
+		   "<th align=left>Triggers at</th><th align=left>Clears at</th><th align=left></th></tr>${rows.join('')}</table>" +
+		   "<small>CO₂ at or above ${param('ervAutoCo2Critical')} ppm forces On regardless of outdoor air.</small>"
 }
 
 private String monitorStatus() {

@@ -110,6 +110,20 @@ class ErvAutoControllerSpec extends Specification {
         hub.state.reason.startsWith("all indoor monitors offline/stale")
     }
 
+    def "the status table shows each reading against its trigger and clear levels"() {
+        given:
+        bedroom.states.carbonDioxide = 1100
+        hub.settings.ervAutoVocHigh = 200
+        evaluate()
+
+        when: def html = hub.script.readingsTable()
+
+        then:
+        html.contains("<td>Indoor CO₂ (ppm)</td><td>1100 <small>(Master Bedroom)</small></td><td>≥ 1000</td><td>≤ 850</td><td><b style='color:#c00'>high</b></td>")
+        html.contains("<td>Indoor VOC index</td><td>100 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 150</td><td>ok</td>")
+        html.contains("<td>Outdoor PM2.5 (µg/m³)</td><td>4 <small>(Outdoor)</small></td><td>≥ 35</td><td>≤ 30</td><td>ok</td>")
+    }
+
     def "does nothing while another ERV mode is selected"() {
         given: auto.states.switch = "off"
         when: hub.script.evaluate()
