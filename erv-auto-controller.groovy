@@ -74,8 +74,8 @@ preferences { page(name: "mainPage") }
 		"Default 1500 ppm: UK school guidance BB101 caps the daily occupied average at 1500 ppm [6], and Health Canada's residential long-term (24-hour) limit is 1000 ppm [5]. At 1500 ventilation wins even against bad outdoor air."],
 	ervAutoVocHigh:            ["Number", 200,  "Indoor VOC index that triggers ventilation (100 = baseline)",
 		"Default 200. The VOC index puts each sensor's 24-hour average at 100 [7]; Sensirion's own example acts at 150 [8], and vendor scales call 200–249 moderate [16]. 200 leaves a margin above Sensirion's example for normal cooking/cleaning swings."],
-	ervAutoVocBuffer:          ["Number", 50,   "VOC index hysteresis",
-		"Default 50 index points (clears at 150, Sensirion's example action level [8]); well above the sensor's ±15-point variation [9]."],
+	ervAutoVocBuffer:          ["Number", 25,   "VOC index hysteresis",
+		"Default 25 index points (clears at 175): above the sensor's ±15-point variation [9], so noise can't flip it, but shallow enough that ventilation can reach it. Dilution only brings indoor VOCs down toward an equilibrium set by indoor sources, which can sit well above Sensirion's 150 example level [8]; a deeper clear point can keep the ERV running for hours with no further gain."],
 	ervAutoNoxHigh:            ["Number", 100,  "Indoor NOx index that triggers ventilation (1 = baseline)",
 		"Default 100. The NOx index is 1 in clean air and rises with combustion such as a gas stove [10]; device-to-device variation is ±50 points [9], so 100 is clearly above that, and vendor scales start 'polluted' at 100 [16]."],
 	ervAutoNoxBuffer:          ["Number", 15,   "NOx index hysteresis",
@@ -346,7 +346,7 @@ private Map applyCycleLimits(String target, boolean urgent, boolean protect, Map
 	return [state: applied, why: why.unique().join(", ") ?: "minimum run/off time"]
 }
 
-// "VOC index 202 ≥ 200" when high, "… 180 (high until ≤ 150)" while clearing, "… 120 < 200" when fine
+// "VOC index 202 ≥ 200" when high, "… 180 (high until ≤ 175)" while clearing, "… 120 < 200" when fine
 private String vsLimit(String name, def value, def high, def buffer, def bad, String unit = "") {
 	if (value == null) return "${name} —"
 	def u = unit ? " ${unit}" : ""

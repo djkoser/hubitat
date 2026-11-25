@@ -174,7 +174,7 @@ class ErvAutoControllerSpec extends Specification {
 
         then:
         html.contains("<td>Indoor CO₂ above outdoor (ppm)</td><td>680 <small>(1100 Master Bedroom vs outdoor 420)</small></td><td>≥ 600</td><td>≤ 450</td><td><b style='color:#c00'>high</b></td>")
-        html.contains("<td>Indoor VOC index</td><td>100 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 150</td><td>ok</td>")
+        html.contains("<td>Indoor VOC index</td><td>100 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 175</td><td>ok</td>")
         html.contains("<td>Outdoor PM2.5 (µg/m³)</td><td>4 <small>(Outdoor)</small></td><td>≥ 35</td><td>≤ 30</td><td>ok</td>")
     }
 
@@ -261,7 +261,7 @@ class ErvAutoControllerSpec extends Specification {
         given: hub.settings.ervAutoVocHigh = 200
         living.states.vocIndex = 215; evaluate()
         when: living.states.vocIndex = 180; hub.advance(60); evaluate()
-        then: hub.state.reason.startsWith("indoor VOC index 180 (high until ≤ 150) (Living Room); outdoor PM2.5 4 µg/m³ < 35 µg/m³")
+        then: hub.state.reason.startsWith("indoor VOC index 180 (high until ≤ 175) (Living Room); outdoor PM2.5 4 µg/m³ < 35 µg/m³")
     }
 
     def "stage 1: an elevated outdoor VOC index alone doesn't block ventilation; a spike does"() {
@@ -311,7 +311,7 @@ class ErvAutoControllerSpec extends Specification {
         status.states.pm25 == 3
         status.states.vocIndex == "203"
         status.states.noxIndex == "1"
-        new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200 (clears ≤ 150)")
+        new groovy.json.JsonSlurper().parseText(status.states.ervCauseValues).contains("Indoor VOC index ≥ 200 (clears ≤ 175)")
 
         when: "manual mode: readings still update"
         hub.script.autoSwitchHandler(hub.event(auto, "switch", "off"))
