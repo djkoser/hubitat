@@ -155,8 +155,9 @@ def mainPage() {
 		section("Thresholds") {
 			paragraph "<small>Each setting shows its default and why it was chosen; [n] refers to the References section below.</small>"
 			PARAMS.each { n, d ->
-				if (d[0] == "String") input n, "enum", title: d[2], description: d[3], options: STATES, defaultValue: d[1], required: false
-				else input n, d[0] == "Decimal" ? "decimal" : "number", title: d[2], description: d[3], defaultValue: d[1], required: false
+				def title = "${d[2]}<br><small style='color:#666'>${d[3]}</small>"   // always visible (a description is only a placeholder)
+				if (d[0] == "String") input n, "enum", title: title, options: STATES, defaultValue: d[1], required: false
+				else input n, d[0] == "Decimal" ? "decimal" : "number", title: title, defaultValue: d[1], required: false
 			}
 		}
 		section("References") {
