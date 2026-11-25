@@ -193,22 +193,28 @@ def applyRecommendedCorrections() {
 		log.warn "${device.displayName}: monitor only accepts cloud configuration; set corrections in the AirGradient dashboard"
 		return
 	}
-	def corr = [pm02: [correctionAlgorithm: "epa_2021", slr: [:]]]
-	if ((state.model ?: "").toString().startsWith("O-")) {   // Open Air outdoor monitor
-		corr.atmp = [correctionAlgorithm: "ag_pms5003t_2024", slr: [:]]
-		corr.rhum = [correctionAlgorithm: "ag_pms5003t_2024", slr: [:]]
-	}
+	// One correction per request: Open Air firmware (3.7.1) silently drops pm02 when it
+	// arrives in the same PUT as atmp/rhum, so PM2.5 goes first and temp/humidity follow.
+	putCorrections([pm02: [correctionAlgorithm: "epa_2021", slr: [:]]], "pm02")
+}
+
+private void putCorrections(Map corr, String step) {
 	asynchttpPut("correctionResponse", [uri: "http://${ip}", path: "/config",
-										requestContentType: "application/json", contentType: "application/json",
-										body: JsonOutput.toJson([corrections: corr]), timeout: 10])
+										requestContentType: "application/json", contentType: "text/plain",
+										body: JsonOutput.toJson([corrections: corr]), timeout: 10], [step: step])
 }
 
 def correctionResponse(resp, data) {
 	if (resp.hasError() || !(resp.status in [200, 204])) {
-		log.warn "${device.displayName}: setting corrections failed (${resp.status})"
+		log.warn "${device.displayName}: setting ${data?.step} correction failed (${resp.status})"
 		return
 	}
-	log.info "${device.displayName}: corrections applied"
+	log.info "${device.displayName}: ${data?.step} correction applied"
+	if (data?.step == "pm02" && (state.model ?: "").toString().startsWith("O-")) {   // Open Air outdoor monitor
+		putCorrections([atmp: [correctionAlgorithm: "ag_pms5003t_2024", slr: [:]],
+						rhum: [correctionAlgorithm: "ag_pms5003t_2024", slr: [:]]], "temperature/humidity")
+		return
+	}
 	runIn(5, "fetchConfig")
 }
 
