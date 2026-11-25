@@ -33,7 +33,7 @@ class ErvAutoControllerSpec extends Specification {
         evaluate() == "Off"
         !ervRuns() && !ahRuns()
         hub.globals.ervAutoState == "Off"
-        hub.globals.ervAutoReason == "air good: CO2 over outdoor 230 < 600 (650 in Master Bedroom vs 420), VOC 100 < 250, NOx 1 < 50, PM2.5 3 < 15"
+        hub.globals.ervAutoReason == "air good: CO2 over outdoor 230 ppm < 600 ppm (650 ppm in Master Bedroom vs 420 ppm outdoors), VOC index 100 < 250, NOx index 1 < 50, PM2.5 3 µg/m³ < 15 µg/m³"
     }
 
     def "ventilates for high CO2 in the worst room and names that room"() {
@@ -41,7 +41,7 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "On"
         ervRuns() && ahRuns()
-        hub.state.reason == "indoor CO2 over outdoor 680 ≥ 600 (1100 in Master Bedroom vs 420); outdoor VOC 100 < 250, NOx 1 < 50"
+        hub.state.reason == "indoor CO2 over outdoor 680 ppm ≥ 600 ppm (1100 ppm in Master Bedroom vs 420 ppm outdoors); outdoor VOC index 100 < 250, NOx index 1 < 50"
     }
 
     def "turns the air handler on before the ERV"() {
@@ -234,7 +234,7 @@ class ErvAutoControllerSpec extends Specification {
         then:
         status.states.ervStatus == "Recirculate"
         status.states.ervCause == "Outdoor VOC high"
-        status.states.ervReason == "indoor VOC 215 ≥ 200 (Living Room), but outdoor VOC 271 ≥ 250, NOx 1 < 50"
+        status.states.ervReason == "indoor VOC index 215 ≥ 200 (Living Room), but outdoor VOC index 271 ≥ 250, NOx index 1 < 50"
 
         when: "air clears inside its minimum run"
         living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
@@ -262,6 +262,6 @@ class ErvAutoControllerSpec extends Specification {
         given: hub.settings.ervAutoVocHigh = 200
         living.states.vocIndex = 215; evaluate()
         when: living.states.vocIndex = 180; hub.advance(60); evaluate()
-        then: hub.state.reason.startsWith("indoor VOC 180 (high until ≤ 150) (Living Room); outdoor VOC 100 < 250")
+        then: hub.state.reason.startsWith("indoor VOC index 180 (high until ≤ 150) (Living Room); outdoor VOC index 100 < 250")
     }
 }

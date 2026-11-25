@@ -202,14 +202,14 @@ def evaluate() {
 
 	// Each reading against its limits, for the reason text
 	def co2Text = co2Excess == null ? "CO2 —" :
-		vsLimit("CO2 over outdoor", co2Excess, p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer, f.inCo2Bad) +
-		" (${fmt(inCo2)}${multiIn && inCo2M ? ' in ' + inCo2M.name : ''} vs ${fmt(outCo2)})"
-	def inVocText  = vsLimit("VOC", inVoc, p.ervAutoVocHigh, p.ervAutoVocBuffer, f.inVocBad) + (f.inVocBad ? where(inVocM) : "")
-	def inNoxText  = vsLimit("NOx", inNox, p.ervAutoNoxHigh, p.ervAutoNoxBuffer, f.inNoxBad) + (f.inNoxBad ? where(inNoxM) : "")
-	def inPmText   = vsLimit("PM2.5", inPm, p.ervAutoPm25High, p.ervAutoPm25Buffer, f.inPmBad) + (f.inPmBad ? where(inPmM) : "")
-	def outVocText = vsLimit("VOC", outVoc, p.ervAutoOutdoorVocHigh, p.ervAutoOutdoorGasBuffer, f.outVocBad)
-	def outNoxText = vsLimit("NOx", outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer, f.outNoxBad)
-	def outPmText  = vsLimit("PM2.5", outPm, p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer, f.outPmBad)
+		vsLimit("CO2 over outdoor", co2Excess, p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer, f.inCo2Bad, "ppm") +
+		" (${fmt(inCo2)} ppm${multiIn && inCo2M ? ' in ' + inCo2M.name : ''} vs ${fmt(outCo2)} ppm outdoors)"
+	def inVocText  = vsLimit("VOC index", inVoc, p.ervAutoVocHigh, p.ervAutoVocBuffer, f.inVocBad) + (f.inVocBad ? where(inVocM) : "")
+	def inNoxText  = vsLimit("NOx index", inNox, p.ervAutoNoxHigh, p.ervAutoNoxBuffer, f.inNoxBad) + (f.inNoxBad ? where(inNoxM) : "")
+	def inPmText   = vsLimit("PM2.5", inPm, p.ervAutoPm25High, p.ervAutoPm25Buffer, f.inPmBad, "µg/m³") + (f.inPmBad ? where(inPmM) : "")
+	def outVocText = vsLimit("VOC index", outVoc, p.ervAutoOutdoorVocHigh, p.ervAutoOutdoorGasBuffer, f.outVocBad)
+	def outNoxText = vsLimit("NOx index", outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer, f.outNoxBad)
+	def outPmText  = vsLimit("PM2.5", outPm, p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer, f.outPmBad, "µg/m³")
 
 	def target, reason, cause
 	boolean urgent = false    // may start equipment during its minimum off time
@@ -221,7 +221,7 @@ def evaluate() {
 		cause = "Monitors offline"
 	} else if (inCo2 != null && inCo2 >= p.ervAutoCo2Critical) {
 		target = "On"; urgent = true
-		reason = "CO2 ${inCo2}${where(inCo2M)} ≥ critical ${p.ervAutoCo2Critical}"
+		reason = "CO2 ${fmt(inCo2)} ppm${where(inCo2M)} ≥ critical ${fmt(p.ervAutoCo2Critical)} ppm"
 		cause = "CO2 critical"
 	} else if (f.inCo2Bad || f.inVocBad || f.inNoxBad) {
 		def what = [f.inCo2Bad ? co2Text : null, f.inVocBad ? inVocText : null, f.inNoxBad ? inNoxText : null].findAll { it }.join(", ")
@@ -238,12 +238,12 @@ def evaluate() {
 		def cleaner = inPm != null ? inPm - p.ervAutoPm25Margin : null
 		if (!f.outPmBad && outPm != null && inPm != null && outPm <= cleaner) {
 			target = "On"
-			reason = "indoor ${inPmText}; outdoor PM2.5 ${fmt(outPm)} is cleaner (needs ≤ ${fmt(cleaner)})"
+			reason = "indoor ${inPmText}; outdoor PM2.5 ${fmt(outPm)} µg/m³ is cleaner (needs ≤ ${fmt(cleaner)} µg/m³)"
 			cause = "Indoor PM2.5 high"
 		} else {
 			target = "Recirculate"; protect = f.outPmBad as boolean
 			reason = "indoor ${inPmText}, but " + (f.outPmBad ? "outdoor ${outPmText}" :
-			         "outdoor PM2.5 ${fmt(outPm)} isn't cleaner (needs ≤ ${fmt(cleaner)})") + " — filtering"
+			         "outdoor PM2.5 ${fmt(outPm)} µg/m³ isn't cleaner (needs ≤ ${fmt(cleaner)} µg/m³)") + " — filtering"
 			cause = "Filtering particles"
 		}
 	} else {
@@ -312,12 +312,13 @@ private Map applyCycleLimits(String target, boolean urgent, boolean protect, Map
 	return [state: applied, why: why.unique().join(", ") ?: "minimum run/off time"]
 }
 
-// "VOC 202 ≥ 200" when high, "VOC 180 (high until ≤ 150)" while clearing, "VOC 120 < 200" when fine
-private String vsLimit(String name, def value, def high, def buffer, def bad) {
+// "VOC index 202 ≥ 200" when high, "… 180 (high until ≤ 150)" while clearing, "… 120 < 200" when fine
+private String vsLimit(String name, def value, def high, def buffer, def bad, String unit = "") {
 	if (value == null) return "${name} —"
-	def v = "${name} ${fmt(value)}"
-	if (!bad) return "${v} < ${fmt(high)}"
-	return value >= high ? "${v} ≥ ${fmt(high)}" : "${v} (high until ≤ ${fmt(high - buffer)})"
+	def u = unit ? " ${unit}" : ""
+	def v = "${name} ${fmt(value)}${u}"
+	if (!bad) return "${v} < ${fmt(high)}${u}"
+	return value >= high ? "${v} ≥ ${fmt(high)}${u}" : "${v} (high until ≤ ${fmt(high - buffer)}${u})"
 }
 
 private String fmt(def n) {
