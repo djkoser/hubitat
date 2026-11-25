@@ -16,8 +16,9 @@ metadata {
 		attribute "ervStatus", "enum", ["On", "Recirculate", "Off"]
 		attribute "ervRunning", "enum", ["true", "false"]
 		attribute "airHandlerRunning", "enum", ["true", "false"]
-		attribute "ervCause", "enum", ["Air good", "Indoor air", "CO2 critical", "Outdoor air bad", "Filtering particles",
-		                               "Minimum run", "Minimum off", "Monitors offline", "Manual"]
+		attribute "ervCause", "enum", ["Air good", "Indoor CO2 high", "Indoor VOC high", "Indoor NOx high", "Indoor PM2.5 high",
+		                               "CO2 critical", "Outdoor VOC high", "Outdoor NOx high", "Outdoor VOC and NOx high",
+		                               "Filtering particles", "Minimum run", "Minimum off", "Monitors offline", "Manual"]
 		attribute "ervReason", "string"
 	}
 }

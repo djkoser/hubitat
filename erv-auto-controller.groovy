@@ -218,17 +218,17 @@ def evaluate() {
 		if (f.outVocBad || f.outNoxBad) {
 			target = "Recirculate"; protect = true
 			reason = "indoor ${what} high but outdoor gases bad (VOC ${outVoc}, NOx ${outNox})"
-			cause = "Outdoor air bad"
+			cause = f.outVocBad && f.outNoxBad ? "Outdoor VOC and NOx high" : (f.outVocBad ? "Outdoor VOC high" : "Outdoor NOx high")
 		} else {
 			target = "On"
 			reason = "indoor ${what} high"
-			cause = "Indoor air"
+			cause = f.inCo2Bad ? "Indoor CO2 high" : (f.inVocBad ? "Indoor VOC high" : "Indoor NOx high")
 		}
 	} else if (f.inPmBad) {
 		if (!f.outPmBad && outPm != null && inPm != null && outPm + p.ervAutoPm25Margin <= inPm) {
 			target = "On"
 			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} cleaner"
-			cause = "Indoor air"
+			cause = "Indoor PM2.5 high"
 		} else {
 			target = "Recirculate"; protect = f.outPmBad as boolean
 			reason = "indoor PM2.5 ${inPm}${where(inPmM)} high, outdoor ${outPm} not cleaner — filtering"

@@ -233,14 +233,19 @@ class ErvAutoControllerSpec extends Specification {
         living.states.vocIndex = 215; outside.states.vocIndex = 271; evaluate()
         then:
         status.states.ervStatus == "Recirculate"
-        status.states.ervCause == "Outdoor air bad"
+        status.states.ervCause == "Outdoor VOC high"
         status.states.ervReason == "indoor VOC 215 (Living Room) high but outdoor gases bad (VOC 271, NOx 1)"
 
         when: "air clears inside its minimum run"
         living.states.vocIndex = 100; hub.advance(5 * 60); evaluate()
         then: status.states.ervCause == "Minimum run"
 
+        when: "outdoor NOx bad too"
+        living.states.vocIndex = 215; outside.states.noxIndex = 150; hub.advance(60); evaluate()
+        then: status.states.ervCause == "Outdoor VOC and NOx high"
+
         when: "after the minimum run, then high again inside the minimum off"
+        living.states.vocIndex = 100; outside.states.noxIndex = 1; outside.states.vocIndex = 100
         hub.advance(26 * 60); evaluate()
         living.states.carbonDioxide = 1100; hub.advance(60); evaluate()
         then:
