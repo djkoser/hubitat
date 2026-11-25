@@ -1,11 +1,11 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.15.2",
+  "version": "1.16.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
-  "dateReleased": "2026-11-24",
+  "dateReleased": "2026-11-25",
   "category": "Convenience",
   "tags": [
     "Climate Control",

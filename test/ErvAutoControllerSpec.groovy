@@ -6,7 +6,7 @@ class ErvAutoControllerSpec extends Specification {
     FakeDevice auto = new FakeDevice(id: 334, displayName: "ERV Auto", states: [switch: "on"])
     FakeDevice living = new FakeDevice(id: 337, displayName: "Living Room", states: [carbonDioxide: 600, vocIndex: 100, noxIndex: 1, pm25: 3, healthStatus: "online"])
     FakeDevice bedroom = new FakeDevice(id: 339, displayName: "Master Bedroom", states: [carbonDioxide: 650, vocIndex: 100, noxIndex: 1, pm25: 3, healthStatus: "online"])
-    FakeDevice outside = new FakeDevice(id: 338, displayName: "Outdoor", states: [vocIndex: 100, noxIndex: 1, pm25: 4, healthStatus: "online"])
+    FakeDevice outside = new FakeDevice(id: 338, displayName: "Outdoor", states: [carbonDioxide: 420, vocIndex: 100, noxIndex: 1, pm25: 4, healthStatus: "online"])
     FakeDevice ervRelay = new FakeDevice(id: 330, displayName: "ERV Stop Relay", states: [switch: "on"])
     FakeDevice ahRelay = new FakeDevice(id: 331, displayName: "Air Handler Stop Relay", states: [switch: "on"])
     AppHarness hub
@@ -14,12 +14,16 @@ class ErvAutoControllerSpec extends Specification {
     def setup() {
         hub = new AppHarness("erv-auto-controller.groovy",
             [autoSwitch: auto, indoor: [living, bedroom], outdoor: [outside], ervStopRelay: ervRelay, ahStopRelay: ahRelay,
-             ervAutoMinVentMinutesPerHour: 0, logEnable: false],
+             ervAutoMinRunMinutes: 30, ervAutoMinOffMinutes: 30, logEnable: false],
             [ervAutoState: "", ervAutoReason: ""])
         [living, bedroom, outside].each { it.lastActivity = new Date(hub.clock) }
     }
 
-    private String evaluate() { hub.script.evaluate(); hub.state.current }
+    // Monitors report on each evaluation, so time skips don't make them stale
+    private String evaluate() {
+        [living, bedroom, outside].each { it.lastActivity = new Date(hub.clock) }
+        hub.script.evaluate(); hub.state.current
+    }
     // Relays are normally closed: relay off = equipment runs
     private boolean ervRuns() { ervRelay.states.switch == "off" }
     private boolean ahRuns()  { ahRelay.states.switch == "off" }
@@ -37,7 +41,7 @@ class ErvAutoControllerSpec extends Specification {
         expect:
         evaluate() == "On"
         ervRuns() && ahRuns()
-        hub.state.reason == "indoor CO2 1100 (Master Bedroom) high"
+        hub.state.reason == "indoor CO2 1100 (Master Bedroom) (680 above outdoor) high"
     }
 
     def "turns the air handler on before the ERV"() {
@@ -63,35 +67,73 @@ class ErvAutoControllerSpec extends Specification {
         expect: "outdoor 4 is more than 5 below 20"
         evaluate() == "On"
 
-        when: "outdoor smoke"
-        hub.state.lastChange = 0
+        when: "outdoor smoke: the ERV stops at once, inside its minimum run, the air handler keeps filtering"
         outside.states.pm25 = 40
         then:
         evaluate() == "Recirculate"
+        ahRuns() && !ervRuns()
     }
 
-    def "critical CO2 overrides the minimum dwell"() {
-        given: evaluate()                       // Off, just changed
-        living.states.carbonDioxide = 1600
-        expect: evaluate() == "On"
-    }
-
-    def "a non-urgent change waits for the minimum dwell"() {
-        given: evaluate()                       // Off at t0
-        living.states.carbonDioxide = 1100
-        when: hub.advance(5 * 60); evaluate()
-        then: hub.state.current == "Off"
-        when: hub.advance(11 * 60); evaluate()
-        then: hub.state.current == "On"
-    }
-
-    def "CO2 hysteresis: trips at 1000, clears only at or below 850"() {
-        when: living.states.carbonDioxide = 1000; evaluate()
+    def "CO2 is judged relative to outdoor: trips at outdoor + 600, clears at outdoor + 450"() {
+        when: living.states.carbonDioxide = 1020; evaluate()
         then: hub.state.flags.inCo2Bad
         when: living.states.carbonDioxide = 900; evaluate()
         then: hub.state.flags.inCo2Bad
-        when: living.states.carbonDioxide = 850; evaluate()
+        when: living.states.carbonDioxide = 870; evaluate()
         then: !hub.state.flags.inCo2Bad
+        when: "the same indoor level with higher outdoor CO2 is no longer a problem"
+        living.states.carbonDioxide = 1020; outside.states.carbonDioxide = 500; evaluate()
+        then: !hub.state.flags.inCo2Bad
+    }
+
+    def "assumes 420 ppm outdoors when no outdoor monitor reports CO2"() {
+        given: outside.states.remove("carbonDioxide"); living.states.carbonDioxide = 1020
+        expect: evaluate() == "On"
+    }
+
+    def "once started, runs at least the minimum run time"() {
+        given: living.states.carbonDioxide = 1100; evaluate()
+        living.states.carbonDioxide = 600
+        when: hub.advance(29 * 60); evaluate()
+        then:
+        hub.state.current == "On" && ervRuns()
+        hub.state.reason == "air good — holding On: ERV ran 29 of 30 min, air handler ran 29 of 30 min"
+        when: hub.advance(61); evaluate()
+        then: hub.state.current == "Off" && !ervRuns() && !ahRuns()
+    }
+
+    def "once stopped, stays off at least the minimum off time"() {
+        given: living.states.carbonDioxide = 1100; evaluate(); hub.advance(31 * 60)
+        living.states.carbonDioxide = 600; evaluate()          // Off
+        living.states.carbonDioxide = 1100
+        when: hub.advance(10 * 60); evaluate()
+        then: hub.state.current == "Off" && hub.state.reason.contains("ERV off 10 of 30 min")
+        when: hub.advance(20 * 60); evaluate()
+        then: hub.state.current == "On"
+    }
+
+    def "critical CO2 starts equipment inside its minimum off time"() {
+        given: living.states.carbonDioxide = 1100; evaluate(); hub.advance(31 * 60)
+        living.states.carbonDioxide = 600; evaluate()          // Off
+        when: living.states.carbonDioxide = 1600; hub.advance(60); evaluate()
+        then: hub.state.current == "On"
+    }
+
+    def "a PM2.5 run is held for the minimum run too"() {
+        given: "PM2.5 high, outdoor cleaner: ventilating"
+        living.states.pm25 = 20; evaluate()
+        when: "indoor clears after 5 minutes"
+        living.states.pm25 = 3; hub.advance(5 * 60); evaluate()
+        then: "both held until the minimum run"
+        hub.state.current == "On"
+        when: hub.advance(26 * 60); evaluate()
+        then: hub.state.current == "Off"
+    }
+
+    def "takes the equipment as it is when Auto starts, without holding it"() {
+        given: "ERV was running under another mode"
+        ervRelay.states.switch = "off"; ahRelay.states.switch = "off"
+        expect: evaluate() == "Off"
     }
 
     def "an offline monitor is ignored and named while others still work"() {
@@ -119,7 +161,7 @@ class ErvAutoControllerSpec extends Specification {
         when: def html = hub.script.readingsTable()
 
         then:
-        html.contains("<td>Indoor CO₂ (ppm)</td><td>1100 <small>(Master Bedroom)</small></td><td>≥ 1000</td><td>≤ 850</td><td><b style='color:#c00'>high</b></td>")
+        html.contains("<td>Indoor CO₂ above outdoor (ppm)</td><td>680 <small>(1100 Master Bedroom vs outdoor 420)</small></td><td>≥ 600</td><td>≤ 450</td><td><b style='color:#c00'>high</b></td>")
         html.contains("<td>Indoor VOC index</td><td>100 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 150</td><td>ok</td>")
         html.contains("<td>Outdoor PM2.5 (µg/m³)</td><td>4 <small>(Outdoor)</small></td><td>≥ 35</td><td>≤ 30</td><td>ok</td>")
     }
@@ -134,48 +176,18 @@ class ErvAutoControllerSpec extends Specification {
 
     def "uses its own settings over defaults"() {
         given:
-        hub.settings.ervAutoCo2High = 700
+        hub.settings.ervAutoCo2AboveOutdoor = 300
         living.states.carbonDioxide = 720
         expect: evaluate() == "On"
     }
 
-    // On the hub an input the page hasn't saved reads as null; hubitat_ci returns its
-    // defaultValue instead, so these tests pass explicit nulls for the "never saved" inputs.
-    private AppHarness freshInstall(Map globals) {
-        new AppHarness("erv-auto-controller.groovy",
-            [autoSwitch: auto, indoor: [living], outdoor: [outside], ervStopRelay: ervRelay, ahStopRelay: ahRelay,
-             ervAutoVocHigh: null, ervAutoIdleState: null, ervAutoPm25Margin: null, ervAutoMinVentMinutesPerHour: null,
-             ervAutoCo2High: null, logEnable: false], globals)
-    }
-
-    def "carries settings over from the hub variables they replaced"() {
+    def "removes retired settings and timing state on update"() {
         given:
-        def h = freshInstall([ervAutoVocHigh: "200", ervAutoIdleState: "Recirculate", ervAutoPm25Margin: "2.5",
-                              ervAutoMinVentMinutesPerHour: "0"])
-
-        when: h.script.migrateFromHubVariables()
-
+        hub.settings.ervAutoCo2High = 1000; hub.settings.ervAutoMinDwellMinutes = 15
+        hub.state.ventMs = 5
+        when: hub.script.updated()
         then:
-        h.settings.ervAutoVocHigh == 200
-        h.settings.ervAutoIdleState == "Recirculate"
-        h.settings.ervAutoPm25Margin == 2.5
-        h.settings.ervAutoMinVentMinutesPerHour == 0
-        h.settings.ervAutoCo2High == null     // no hub variable: stays unset, default applies
-        h.script.param("ervAutoVocHigh") == 200
-        h.script.param("ervAutoCo2High") == 1000
-    }
-
-    def "the hub variable wins on the first run even over a just-saved default, and only once"() {
-        given: "the first Done on the new page saved the field's default"
-        hub.settings.ervAutoVocHigh = 250
-        hub.globals.ervAutoVocHigh = "200"
-
-        when: hub.script.migrateFromHubVariables()
-        then: hub.settings.ervAutoVocHigh == 200
-
-        when: "the user later changes it; the leftover hub variable is not applied again"
-        hub.settings.ervAutoVocHigh = 300
-        hub.script.migrateFromHubVariables()
-        then: hub.settings.ervAutoVocHigh == 300
+        !hub.settings.containsKey("ervAutoCo2High") && !hub.settings.containsKey("ervAutoMinDwellMinutes")
+        !hub.state.containsKey("ventMs")
     }
 }
