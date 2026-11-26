@@ -148,6 +148,23 @@ class LockCodesSpec extends Specification {
         then: setCalls(front).every { it[1] != 3 }
     }
 
+    def "the Fetch now button reads the calendar before returning, so the page shows the result"() {
+        given: hub.script.installed(); clearCalls()
+        long t = hub.clock
+        hub.httpGetResponder = { p -> [status: 200, data: new StringReader(ics(event("e1", "Sharon", t - HOUR, t + HOUR)))] }
+        when: hub.script.appButtonHandler("fetchNow")
+        then:
+        hub.http.last().method == "GET-SYNC"
+        hub.state.lastFetch == hub.clock
+        setCalls(front).contains(["setCode", 3, "1111", "Sharon"])
+    }
+
+    def "a failed Fetch now is recorded like a scheduled failure"() {
+        given: hub.script.installed(); hub.httpGetResponder = null
+        when: hub.script.appButtonHandler("fetchNow")
+        then: hub.state.calendarError == "no responder"
+    }
+
     // ── settings changes ──
 
     def "removing a lock from a person whose code is on takes it off that lock"() {

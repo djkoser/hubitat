@@ -112,7 +112,22 @@ def initialize() {
 
 def logsOff() { app.updateSetting("logEnable", [value: "false", type: "bool"]) }
 
-def appButtonHandler(String btn) { if (btn == "fetchNow") poll() }
+// The button waits for the read (a blocking httpGet), so the page that reloads after the press
+// already shows the result. Scheduled reads stay asynchronous.
+def appButtonHandler(String btn) { if (btn == "fetchNow") fetchNow() }
+
+private void fetchNow() {
+	if (!settings.icsUrl) return
+	try {
+		httpGet([uri: icsUri(), contentType: "text/plain", textParser: true, timeout: 20]) { resp ->
+			def d = resp.data
+			String body = d == null ? null : (d instanceof String ? d : (d.respondsTo("getText") ? d.getText() : d.toString()))
+			handleIcs(resp.status == 200 ? null : "HTTP ${resp.status}", body)
+		}
+	} catch (e) {
+		handleIcs(e.message ?: e.toString(), null)
+	}
+}
 
 // ── People ───────────────────────────────────────────────────────────────────
 
@@ -131,9 +146,10 @@ private List personLocks(int i) { ((settings["personLocks_${i}"] ?: []) as List)
 
 def poll() {
 	if (!settings.icsUrl) return
-	asynchttpGet("icsHandler", [uri: settings.icsUrl.toString().trim().replaceFirst(/^webcal:/, "https:"),
-								 contentType: "text/plain", textParser: true, timeout: 30])
+	asynchttpGet("icsHandler", [uri: icsUri(), contentType: "text/plain", textParser: true, timeout: 30])
 }
+
+private String icsUri() { settings.icsUrl.toString().trim().replaceFirst(/^webcal:/, "https:") }
 
 def icsHandler(resp, data) {
 	String err = null
@@ -143,6 +159,12 @@ def icsHandler(resp, data) {
 		else if (resp.getStatus() != 200) err = "HTTP ${resp.getStatus()}"
 		else body = resp.getData()?.toString()
 	} catch (e) { err = e.message }
+	handleIcs(err, body)
+}
+
+// One calendar read's outcome: err (or null) and the body
+private void handleIcs(String err, String body) {
+	if (!err && body == null) err = "empty response"
 	if (body != null && !body.contains("BEGIN:VCALENDAR")) err = "the address didn't return a calendar"
 	if (err) { calendarFailed(err); return }
 

@@ -24,6 +24,7 @@ class AppHarness {
     List<Map> scheduled = []                    // [method, delaySeconds/cron, options]
     List<String> logs = []                      // "level: message"
     List<Map> http = []                         // [method, callback, params, data]
+    Closure httpGetResponder = null             // (params) -> [status: n, data: body]; null = throw
     List<List> subscriptions = []
     Map<String, FakeDevice> children = [:]      // child devices by DNI
     String childDriverError = null              // set to make addChildDevice throw (driver not installed)
@@ -58,6 +59,12 @@ class AppHarness {
             subscribe        : { Object[] a -> h.subscriptions << (a as List) },
             unsubscribe      : { Object[] a -> },
             parseJson        : { String t -> new groovy.json.JsonSlurper().parseText(t) },
+            httpGet          : { Object[] a ->      // sync: (params, closure)
+                h.http << [method: "GET-SYNC", params: a[0]]
+                if (!h.httpGetResponder) throw new RuntimeException("no responder")
+                Map r = h.httpGetResponder.call(a[0]) as Map
+                a[1].call(new Expando(status: r.status, data: r.data))
+            },
             asynchttpPost    : { Object[] a -> h.http << [method: "POST", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
             asynchttpGet     : { Object[] a -> h.http << [method: "GET", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
             // Child devices are FakeDevices (in h.children) behind a ChildDeviceWrapper facade
