@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.29.1",
+  "version": "1.30.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -62,6 +62,14 @@
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/lock-codes.groovy",
       "required": false,
       "oauth": false
+    },
+    {
+      "id": "d86be928-c074-4441-bb08-6ba9b2f9ea22",
+      "name": "Garage Doors",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/garage-doors.groovy",
+      "required": false,
+      "oauth": false
     }
   ],
   "drivers": [
@@ -112,6 +120,13 @@
       "name": "Safety Status",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/safety-status.groovy",
+      "required": false
+    },
+    {
+      "id": "488833fb-23b1-40d0-a7d2-cfbaf402c3c4",
+      "name": "Garage Door",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/garage-door.groovy",
       "required": false
     }
   ]

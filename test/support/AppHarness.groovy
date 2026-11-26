@@ -101,7 +101,8 @@ class AppHarness {
         [currentValue: { Object[] a -> d.currentValue(a[0] as String) },
          sendEvent   : { Map e -> d.sendEvent(e) },
          getId       : { -> d.id },
-         getLabel    : { -> d.displayName }] as me.biocomp.hubitat_ci.api.common_api.ChildDeviceWrapper
+         getLabel    : { -> d.displayName },
+         setLabel    : { String l -> d.displayName = l }] as me.biocomp.hubitat_ci.api.common_api.ChildDeviceWrapper
     }
 
     void advance(long seconds) { clock += seconds * 1000L }
