@@ -8,7 +8,7 @@
  * only command devices in its inputs, so a lock dropped from a person's list can still have that
  * person's code removed.)
  *
- * People: each has a name, a code, the locks it works on, a code slot, and when it applies:
+ * People: each has a name, a code, the locks it works on, and when it applies:
  *   - Always:   the code stays on those locks.
  *   - Calendar: the code is added when an event in the Lock Schedules calendar names the
  *               person, and removed when the last such event ends.
@@ -25,9 +25,14 @@
  * event names someone who isn't set up here, when a lock reports a failed code change, and
  * when the calendar can't be read for an hour (and when it recovers).
  *
+ * Slots (lock memory positions) are assigned automatically: each person gets the lowest slot
+ * that is free on all of their locks, judged from what the locks report in lockCodes (so codes
+ * set by anything else are left alone), and keeps it in state.slots. If a person's locks change
+ * and their slot is taken on a new lock, they move to a new free slot.
+ *
  * Codes are entered in password inputs and are never logged or texted. state.applied records
- * which person's code is on which locks and slot (no codes), so changes to a person's locks or
- * slot move the code, and removing a person removes their code.
+ * which person's code is on which locks and slot (no codes), so changes to a person's locks
+ * move the code, and removing a person removes their code.
  */
 
 definition(
@@ -73,7 +78,6 @@ def mainPage() {
 				if (lockOptions()) input "personLocks_${i}", "enum", title: "Locks", options: lockOptions(), multiple: true, required: true
 				else paragraph "<b>Locks:</b> choose the Locks above first."
 				input "personWhen_${i}", "enum", title: "When", options: ["Calendar", "Always"], defaultValue: "Calendar", required: true
-				input "personSlot_${i}", "number", title: "Code slot" + small("Lock memory position for this code (1–250). Slots 1–2 hold the codes Lock Code Manager set."), range: "1..250", defaultValue: 9 + i, required: true
 				if (app.id) paragraph personStatus(i)
 			}
 		}
@@ -87,17 +91,22 @@ def mainPage() {
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 def installed() { initialize() }
-def updated()   { unsubscribe(); unschedule(); initialize() }
+def updated() {
+	unsubscribe(); unschedule()
+	(1..MAX_PEOPLE).each { String n = "personSlot_${it}"; if (settings.containsKey(n)) app.removeSetting(n) }   // slots are automatic now
+	initialize()
+}
 def uninstalled() { }
 
 def initialize() {
 	if (logEnable) runIn(1800, "logsOff")
 	if (state.applied == null) state.applied = [:]
 	if (state.events == null) state.events = []
+	if (state.slots == null) state.slots = [:]
 	if (settings.locks) subscribe(settings.locks, "codeChanged", "codeChangedHandler")
 	int m = Math.max(1, Math.min(60, ((settings.pollMinutes ?: 5) as Integer)))
 	if (settings.icsUrl) schedule("0 */${m} * ? * *", "poll")
-	reconcile(true)   // settings may have changed codes, locks or slots: re-apply everything
+	reconcile(true)   // settings may have changed codes or locks: re-apply everything
 	if (settings.icsUrl) runIn(3, "poll")
 }
 
@@ -112,7 +121,7 @@ private List<Integer> people() { (1..count()).findAll { settings["personName_${i
 private String pname(int i) { settings["personName_${i}"].toString().trim() }
 private String key(String name) { name.trim().toLowerCase() }
 private boolean always(int i) { settings["personWhen_${i}"] == "Always" }
-private int slot(int i) { ((settings["personSlot_${i}"] ?: (9 + i)) as Integer) }
+private Integer slot(int i) { (state.slots ?: [:])["p${i}".toString()] as Integer }
 private Map lockOptions() { ((settings.locks ?: []) as List).collectEntries { [(it.id.toString()): it.displayName] } }
 private lockDev(def id) { ((settings.locks ?: []) as List).find { it.id.toString() == id.toString() } }
 // A person's locks as devices (ids no longer in the Locks list are skipped)
@@ -174,13 +183,14 @@ private void reconcile(boolean resend) {
 	active.each { ev -> names(ev.summary).each { n -> named << n; activeUntil[key(n)] = Math.max((activeUntil[key(n)] ?: 0L) as Long, ev.end as Long) } }
 
 	Map applied = (state.applied ?: [:]) as Map
+	assignSlots(applied)
 	Set known = people().collect { key(pname(it)) } as Set
 	List added = [], removed = []
 
 	people().each { int i ->
-		String pk = "p${i}"
+		String pk = "p${i}".toString()
 		def locks = personLocks(i)
-		boolean want = always(i) || activeUntil.containsKey(key(pname(i)))
+		boolean want = slot(i) != null && (always(i) || activeUntil.containsKey(key(pname(i))))
 		Map cur = applied[pk] as Map
 		if (cur && (cur.name != pname(i) || (cur.slot as Integer) != slot(i))) {   // renamed or moved: clear the old entry
 			clearCode(cur); applied.remove(pk); cur = null
@@ -198,10 +208,13 @@ private void reconcile(boolean resend) {
 			if (!always(i)) removed << cur.name
 		}
 	}
-	// People removed from the app: take their codes off
+	// People removed from the app: take their codes off and free their slots
 	applied.keySet().findAll { pk -> !people().contains((pk.toString().substring(1)) as Integer) }.each { pk ->
 		clearCode(applied[pk] as Map); applied.remove(pk)
 	}
+	Map slots = (state.slots ?: [:]) as Map
+	slots.keySet().findAll { pk -> !people().contains((pk.toString().substring(1)) as Integer) }.each { slots.remove(it) }
+	state.slots = slots
 	state.applied = applied
 
 	if (added) {
@@ -224,6 +237,41 @@ private void reconcile(boolean resend) {
 	state.warned = warned.findAll { w -> active.any { "${it.uid}|${it.start}" == w } } as List
 
 	scheduleNextBoundary()
+}
+
+// Gives every person a slot that is free on all of their locks. A slot counts as taken on a lock
+// when the lock reports a code there that isn't this person's (as recorded in applied), or when
+// another person here holds it.
+private void assignSlots(Map applied) {
+	Map slots = (state.slots ?: [:]) as Map
+	Map lockUsed = [:]   // lock id -> positions the lock reports
+	def used = { lk -> lockUsed.get(lk.id.toString()) ?: (lockUsed[lk.id.toString()] = reportedSlots(lk)) }
+	people().each { int i ->
+		String pk = "p${i}".toString()
+		Integer mine = slots[pk] as Integer
+		Map cur = applied[pk] as Map
+		Set mineOn = ((cur?.locks ?: []) as List).collect { it.toString() } as Set
+		def freeFor = { int n ->
+			!slots.any { k, v -> k != pk && (v as Integer) == n } &&
+			personLocks(i).every { lk -> !used(lk).contains(n) || ((cur?.slot as Integer) == n && mineOn.contains(lk.id.toString())) }
+		}
+		if (mine == null || !freeFor(mine)) {
+			Integer n = (1..250).find { freeFor(it) }
+			if (n == null) { log.warn "Lock Codes: no free slot for ${pname(i)} on ${personLocks(i)*.displayName.join(', ')}"; return }
+			if (mine != null) log.info "Lock Codes: ${pname(i)}'s slot ${mine} is taken on one of their locks; moving to slot ${n}"
+			slots[pk] = n
+		}
+	}
+	state.slots = slots
+}
+
+// Positions a lock reports holding a code (lockCodes is JSON, encrypted by some drivers)
+private Set<Integer> reportedSlots(lk) {
+	def raw = lk.currentValue("lockCodes")
+	if (!raw) return [] as Set
+	def m = null
+	try { m = parseJson(raw.toString()) } catch (e) { try { m = parseJson(decrypt(raw.toString())) } catch (e2) { } }
+	return (m instanceof Map) ? (m.keySet().findAll { it.toString().isInteger() }.collect { it as Integer } as Set) : ([] as Set)
 }
 
 private void setOn(lk, int i) {
@@ -387,8 +435,8 @@ private String fmtTime(Long ms) {
 
 private String personStatus(int i) {
 	if (!people().contains(i)) return "<i>Incomplete: needs a name, code and locks.</i>"
-	def a = (state.applied ?: [:])["p${i}"]
-	String onOff = a ? "<b>On</b> (slot ${a.slot})" : "Off"
+	def a = (state.applied ?: [:])["p${i}".toString()]
+	String onOff = (a ? "<b>On</b>" : "Off") + (slot(i) ? " (slot ${slot(i)})" : "")
 	if (always(i)) return "<b>Now:</b> ${onOff}, always"
 	def next = ((state.events ?: []) as List).find { ev -> (ev.end as Long) > now() && names(ev.summary).any { key(it) == key(pname(i)) } }
 	return "<b>Now:</b> ${onOff}" + (next ? "  <b>Next event:</b> ${fmtTime(next.start as Long)} – ${fmtTime(next.end as Long)}" : "  <b>Next event:</b> none in the next ${LOOKAHEAD_DAYS} days")

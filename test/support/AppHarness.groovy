@@ -57,6 +57,7 @@ class AppHarness {
             unschedule       : { Object[] a -> if (a) h.scheduled.removeAll { it.method == a[0] } else h.scheduled.clear() },
             subscribe        : { Object[] a -> h.subscriptions << (a as List) },
             unsubscribe      : { Object[] a -> },
+            parseJson        : { String t -> new groovy.json.JsonSlurper().parseText(t) },
             asynchttpPost    : { Object[] a -> h.http << [method: "POST", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
             asynchttpGet     : { Object[] a -> h.http << [method: "GET", callback: a[0], params: a[1], data: a.length > 2 ? a[2] : null] },
             // Child devices are FakeDevices (in h.children) behind a ChildDeviceWrapper facade

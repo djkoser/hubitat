@@ -98,7 +98,7 @@ def uninstalled() { }
 def initialize() {
 	if (logEnable) runIn(1800, "logsOff")
 	// Drop state for bathrooms that were removed
-	((count() + 1)..MAX_BATHROOMS).each { state.remove("b${it}") }
+	((count() + 1)..MAX_BATHROOMS).each { state.remove("b${it}".toString()) }
 	subscribe(refSensor, "humidity", "refHandler")
 	bathrooms().each { int i ->
 		subscribe(bathSensor(i), "humidity", "humidityHandler")
@@ -135,8 +135,8 @@ private Integer bathroomFor(evt, String role) {
 //   expect     – [value, until]: the switch event our own on()/off() will produce, ignored
 //                so the app doesn't react to itself (an opposite event is still handled)
 //   blinkStep / blinkTotal – LED blink progress
-private Map st(int i) { (state["b${i}"] ?: [:]) as Map }
-private void save(int i, Map s) { state["b${i}"] = s }
+private Map st(int i) { (state["b${i}".toString()] ?: [:]) as Map }
+private void save(int i, Map s) { state["b${i}".toString()] = s }
 
 // ── Humidity ─────────────────────────────────────────────────────────────────
 

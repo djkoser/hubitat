@@ -3,7 +3,8 @@ import support.AppHarness
 import support.FakeDevice
 
 class LockCodesSpec extends Specification {
-    FakeDevice front = new FakeDevice(id: 287, displayName: "Front Door Lock", states: [lockCodes: "{}"])
+    // Slots 1-2 are in use on the front door by codes set outside this app
+    FakeDevice front = new FakeDevice(id: 287, displayName: "Front Door Lock", states: [lockCodes: '{"1":{"name":"David"},"2":{"name":"Savanna"}}'])
     FakeDevice garage = new FakeDevice(id: 284, displayName: "Garage Lock", states: [lockCodes: "{}"])
     FakeDevice david = new FakeDevice(id: 159, displayName: "David's SMS")
     FakeDevice savanna = new FakeDevice(id: 160, displayName: "Savanna's SMS")
@@ -14,9 +15,9 @@ class LockCodesSpec extends Specification {
     def setup() {
         hub = new AppHarness("lock-codes.groovy", [
             icsUrl: "https://calendar.example/private/basic.ics", pollMinutes: 5, locks: [front, garage], notifiers: [david, savanna], peopleCount: 3,
-            personName_1: "Sharon", personCode_1: "1111", personLocks_1: ["287"], personWhen_1: "Calendar", personSlot_1: 10,
-            personName_2: "Jacob", personCode_2: "2222", personLocks_2: ["287", "284"], personWhen_2: "Calendar", personSlot_2: 11,
-            personName_3: "Chad", personCode_3: "3333", personLocks_3: ["287"], personWhen_3: "Always", personSlot_3: 12,
+            personName_1: "Sharon", personCode_1: "1111", personLocks_1: ["287"], personWhen_1: "Calendar",
+            personName_2: "Jacob", personCode_2: "2222", personLocks_2: ["287", "284"], personWhen_2: "Calendar",
+            personName_3: "Chad", personCode_3: "3333", personLocks_3: ["287"], personWhen_3: "Always",
             logEnable: false])
     }
 
@@ -40,7 +41,7 @@ class LockCodesSpec extends Specification {
     def "an Always person's code is set on install, without a text"() {
         when: hub.script.installed()
         then:
-        setCalls(front).contains(["setCode", 12, "3333", "Chad"])
+        setCalls(front).contains(["setCode", 5, "3333", "Chad"])
         texts().isEmpty()
         hub.isScheduled("poll")
     }
@@ -52,8 +53,8 @@ class LockCodesSpec extends Specification {
         long t = hub.clock
         when: fetch(ics(event("e1", "Sharon\\, Jacob", t - HOUR, t + 2 * HOUR)))
         then:
-        setCalls(front)*.getAt(1) as Set == [10, 11] as Set
-        setCalls(garage) == [["setCode", 11, "2222", "Jacob"]]
+        setCalls(front).findAll { it[1] in [3, 4] }*.getAt(1) as Set == [3, 4] as Set
+        setCalls(garage) == [["setCode", 4, "2222", "Jacob"]]
         texts().size() == 1
         texts()[0].startsWith("Lock codes on: Sharon (Front Door Lock); Jacob (Front Door Lock, Garage Lock). Until ")
         savanna.calls.size() == 1
@@ -67,7 +68,7 @@ class LockCodesSpec extends Specification {
         clearCalls()
         when: hub.advance(3601); hub.script.applySchedule()
         then:
-        delCalls(front) == [["deleteCode", 10]]
+        delCalls(front) == [["deleteCode", 3]]
         texts() == ["Lock codes off: Sharon."]
     }
 
@@ -77,14 +78,14 @@ class LockCodesSpec extends Specification {
         when: fetch(ics(event("e1", "Sharon", t + 90 * 60000L, t + 3 * HOUR)))
         then:
         hub.scheduled.findAll { it.method == "applySchedule" }.last().delay == 90 * 60
-        setCalls(front).every { it[1] != 10 }
+        setCalls(front).every { it[1] != 3 }
     }
 
     def "names match regardless of case and spacing"() {
         given: hub.script.installed(); clearCalls()
         long t = hub.clock
         when: fetch(ics(event("e1", "  sharon ", t - HOUR, t + HOUR)))
-        then: setCalls(front) == [["setCode", 10, "1111", "Sharon"]]
+        then: setCalls(front) == [["setCode", 3, "1111", "Sharon"]]
     }
 
     def "overlapping events keep a code on until the last one ends, and text no extra on"() {
@@ -105,7 +106,7 @@ class LockCodesSpec extends Specification {
         when: fetch(cal); fetch(cal)
         then:
         texts().count { it.contains("names Bob, who isn't set up") } == 1
-        setCalls(front)*.getAt(1) == [10]
+        setCalls(front)*.getAt(1) == [3]
     }
 
     def "a calendar error keeps codes on and still ends them on time; it texts after an hour, and on recovery"() {
@@ -124,7 +125,7 @@ class LockCodesSpec extends Specification {
 
         when: hub.advance(3601); hub.script.applySchedule()
         then: "the cached event still ends on time"
-        delCalls(front) == [["deleteCode", 10]]
+        delCalls(front) == [["deleteCode", 3]]
 
         when: fetch(ics())
         then: texts().last().contains("can be read again")
@@ -144,7 +145,7 @@ class LockCodesSpec extends Specification {
         given: hub.script.installed(); clearCalls()
         long t = hub.clock
         when: fetch(ics(event("e1", "Sharon", t - HOUR, t + HOUR, "STATUS:CANCELLED\r\n")))
-        then: setCalls(front).every { it[1] != 10 }
+        then: setCalls(front).every { it[1] != 3 }
     }
 
     // ── settings changes ──
@@ -155,22 +156,44 @@ class LockCodesSpec extends Specification {
         fetch(ics(event("e1", "Jacob", t - HOUR, t + HOUR))); clearCalls()
         when: hub.settings.personLocks_2 = ["287"]; hub.script.updated()
         then:
-        delCalls(garage) == [["deleteCode", 11]]
+        delCalls(garage) == [["deleteCode", 4]]
         texts().isEmpty()
     }
 
-    def "changing a person's slot moves the code"() {
-        given: hub.script.installed(); clearCalls()
-        when: hub.settings.personSlot_3 = 20; hub.script.updated()
+    def "slots are assigned automatically, skipping positions the locks report in use, and kept"() {
+        when: hub.script.installed()
         then:
-        delCalls(front) == [["deleteCode", 12]]
-        setCalls(front).contains(["setCode", 20, "3333", "Chad"])
+        hub.state.slots == [p1: 3, p2: 4, p3: 5]
+
+        when: "later reconciles keep the same slots"
+        front.states.lockCodes = '{"1":{"name":"David"},"2":{"name":"Savanna"},"5":{"name":"Chad"}}'
+        hub.script.updated()
+        then: hub.state.slots == [p1: 3, p2: 4, p3: 5]
+    }
+
+    def "an Always person whose slot is taken on a newly added lock moves to a free slot"() {
+        given: hub.script.installed(); clearCalls()
+        garage.states.lockCodes = '{"5":{"name":"Someone"}}'
+        when: hub.settings.personLocks_3 = ["287", "284"]; hub.script.updated()
+        then:
+        hub.state.slots.p3 == 6
+        delCalls(front) == [["deleteCode", 5]]
+        setCalls(front).contains(["setCode", 6, "3333", "Chad"])
+        setCalls(garage).contains(["setCode", 6, "3333", "Chad"])
+    }
+
+    def "removing a slot setting left from an older version"() {
+        given: hub.settings.personSlot_1 = 10
+        when: hub.script.updated()
+        then: !hub.settings.containsKey("personSlot_1")
     }
 
     def "removing a person removes their code"() {
         given: hub.script.installed(); clearCalls()
         when: hub.settings.peopleCount = 2; hub.script.updated()
-        then: delCalls(front) == [["deleteCode", 12]]
+        then:
+        delCalls(front) == [["deleteCode", 5]]
+        !hub.state.slots.containsKey("p3")
     }
 
     def "a failed code change on a lock is texted"() {
