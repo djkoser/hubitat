@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.24.1",
+  "version": "1.25.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -44,6 +44,14 @@
       "name": "Bathroom Humidity Fan",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/bathroom-humidity-fan.groovy",
+      "required": false,
+      "oauth": false
+    },
+    {
+      "id": "74c9e6d9-4a6a-4353-8a8a-13cdeb82c198",
+      "name": "Chromecast Reconnect",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/chromecast-reconnect.groovy",
       "required": false,
       "oauth": false
     }
