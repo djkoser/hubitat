@@ -195,7 +195,7 @@ class SafetyMonitorSpec extends Specification {
 
     private Map status() { hub.children.values().first().states }
 
-    def "creates the Safety Status device and keeps intrusion, hazard and offline count current"() {
+    def "creates the Safety Status device and keeps intrusion and hazard current"() {
         when: hub.script.installed()
         then:
         hub.children.size() == 1

@@ -28,8 +28,8 @@
  * Timings are this app's own settings. It publishes intrusionMonitoringEnabled and
  * safetyStatus to hub variables of those names, if they exist, for dashboards and other apps.
  * It also creates and updates a view-only "Safety Status" device (driver safety-status.groovy)
- * that shows intrusion Armed / Disarmed / Alert, the most serious active hazard and the number
- * of devices offline, for Google Home and dashboards. It has no commands, so it can't disarm.
+ * that shows intrusion Armed / Disarmed / Alert and the most serious active hazard, for
+ * Google Home and dashboards. It has no commands, so it can't disarm.
  *
  * Cameras are the devices from Hubitat's built-in Reolink Integration, which receives the NVR's
  * AI detections over a live local connection (person / vehicle / pet / package / motion
@@ -398,7 +398,7 @@ private void publishStatus() {
 	def bad = (state.unhealthy ?: [:]).size()
 	if (bad) s += " (${bad} device${bad == 1 ? '' : 's'} offline)"
 	if (getGlobalVar("safetyStatus") != null) setGlobalVar("safetyStatus", s)
-	updateStatusDevice(s, bad)
+	updateStatusDevice(s)
 }
 
 // ── Status device (view only, for Google Home and dashboards) ───────────────
@@ -423,7 +423,7 @@ private String hazardText() {
 	return HAZARDS.find { k, v -> kinds.contains(k) }?.value ?: "None"
 }
 
-private void updateStatusDevice(String summary, int offline) {
+private void updateStatusDevice(String summary) {
 	def dev = getChildDevice(statusDni())
 	if (!dev) return
 	def set = { String name, String value, String text = null ->
@@ -432,7 +432,6 @@ private void updateStatusDevice(String summary, int offline) {
 	def intrusion = state.alertActive ? "Alert" : (state.armed ? "Armed" : "Disarmed")
 	set("intrusion", intrusion, "Intrusion monitoring is ${intrusion.toLowerCase()}")
 	set("hazard", hazardText())
-	set("devicesOffline", Math.min(offline, 50).toString())
 	set("safetyStatus", summary)
 }
 

@@ -16,7 +16,7 @@ across apps or dashboards (the published outputs above).
 
 ## Drivers
 
-- **Safety Status** - View-only status device created by Safety Monitor: intrusion monitoring Armed / Disarmed / Alert, the most serious active hazard (water leak, smoke, carbon monoxide) and how many monitored devices are offline. No commands, so it can't arm or disarm; meant for Google Home (query-only Modes trait) and dashboards.
+- **Safety Status** - View-only status device created by Safety Monitor: intrusion monitoring Armed / Disarmed / Alert and the most serious active hazard (water leak, smoke, carbon monoxide). No commands, so it can't arm or disarm; meant for Google Home (query-only Modes trait) and dashboards.
 - **FanSync Controller / FanSync Fan / FanSync Light** - Fanimation FanSync cloud integration. The controller reads Fanimation's information model (`/api:1/info-model`) and sets each device up from its model: fixed speed presets, breeze mode (speed "auto"), direction, Home Shield, fault codes, and a separate light device per light (e.g. TorchAire down and up lights) with dimming and color-temperature presets.
 - **AirGradient Local** - Polls AirGradient ONE / Open Air monitors over the local API and reports corrected PM2.5, temperature and humidity, plus CO2, VOC/NOx indices and US AQI; sets AirGradient's recommended corrections on the monitor.
 - **IKEA Tradfri Remote Control (E1810) - Power Hold** - E1810 five-button remote driver that reports holding the Power button as "held 1" (stock drivers misreport it as a Prev press).
