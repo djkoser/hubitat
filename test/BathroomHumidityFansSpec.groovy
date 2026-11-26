@@ -2,15 +2,23 @@ import spock.lang.Specification
 import support.AppHarness
 import support.FakeDevice
 
-class BathroomHumidityFanSpec extends Specification {
+class BathroomHumidityFansSpec extends Specification {
     FakeDevice fan = new FakeDevice(id: 266, displayName: "Master Shower Fan", states: [switch: "off"])
     FakeDevice bath = new FakeDevice(id: 400, displayName: "Master Bath Sensor", states: [humidity: 45])
     FakeDevice ref = new FakeDevice(id: 337, displayName: "AirGradient Indoor", states: [humidity: 40, healthStatus: "online"])
+    FakeDevice guestFan = new FakeDevice(id: 258, displayName: "Guest Bathroom Fan", states: [switch: "off"])
+    FakeDevice guestBath = new FakeDevice(id: 360, displayName: "Guest Bath Sensor", states: [humidity: 41])
     AppHarness hub
 
+    private Map st() { hub.state.b1 ?: [:] }
+    private Map guest() { hub.state.b2 ?: [:] }
+    private void expireTimeLimit() { hub.advance(3601); hub.script.checkTimeLimits() }
+
     def setup() {
-        hub = new AppHarness("bathroom-humidity-fan.groovy",
-            [fan: fan, bathSensor: bath, refSensor: ref, ledDevice: null, ledChannel: null, ledNormalMode: "Default", logEnable: false])
+        hub = new AppHarness("bathroom-humidity-fans.groovy",
+            [refSensor: ref, bathroomCount: 2, logEnable: false,
+             bathName_1: "Master Bathroom", fan_1: fan, bathSensor_1: bath, ledDevice_1: null, ledChannel_1: null, ledNormalMode_1: "Default",
+             bathName_2: "Guest Bathroom", fan_2: guestFan, bathSensor_2: guestBath, ledDevice_2: null, ledChannel_2: null, ledNormalMode_2: "Default"])
         hub.state.clear()
     }
 
@@ -22,8 +30,8 @@ class BathroomHumidityFanSpec extends Specification {
         when: humidity(51)
         then:
         fan.commandNames() == ["on"]
-        hub.state.holding
-        hub.isScheduled("timeLimit")
+        st().holding
+        hub.isScheduled("checkTimeLimits")
     }
 
     def "does not start below the start delta"() {
@@ -60,8 +68,8 @@ class BathroomHumidityFanSpec extends Specification {
 
         then:
         fan.calls.isEmpty()
-        hub.state.override
-        !hub.state.holding
+        st().override
+        !st().holding
 
         when: "humidity keeps rising"
         humidity(70)
@@ -79,7 +87,7 @@ class BathroomHumidityFanSpec extends Specification {
         fanEvent("off")
 
         then: "it counts as the override, not as the app's echo"
-        hub.state.override
+        st().override
     }
 
     def "turns the fan off once humidity is back within the stop delta"() {
@@ -87,7 +95,7 @@ class BathroomHumidityFanSpec extends Specification {
         when: humidity(43)
         then:
         fan.commandNames() == ["off"]
-        !hub.state.holding
+        !st().holding
     }
 
     def "leaves a fan the user turned on alone when it gets dry"() {
@@ -100,10 +108,10 @@ class BathroomHumidityFanSpec extends Specification {
 
     def "time limit turns the fan off and stops managing it until dry"() {
         given: humidity(60); echoOwnCommand(); fan.calls.clear()
-        when: hub.script.timeLimit()
+        when: expireTimeLimit()
         then:
         fan.commandNames() == ["off"]
-        hub.state.expired
+        st().expired
         when: echoOwnCommand(); humidity(65)
         then: "no restart while expired"
         fan.commandNames() == ["off"]
@@ -129,10 +137,10 @@ class BathroomHumidityFanSpec extends Specification {
     def "blink restores the configured LED mode on the channel device"() {
         given:
         def parent = new FakeDevice(id: 256, displayName: "ZEN30")
-        hub.settings.ledDevice = parent
-        hub.settings.ledChannel = "Relay"
-        hub.state.blinkStep = 6; hub.state.blinkTotal = 6
-        when: hub.script.blinkStep()
+        hub.settings.ledDevice_1 = parent
+        hub.settings.ledChannel_1 = "Relay"
+        hub.state.b1 = [blinkStep: 6, blinkTotal: 6]
+        when: hub.script.blinkStep([i: 1])
         then: parent.calls == [["setLEDMode", "Relay", "Default"]]
     }
 
@@ -141,7 +149,7 @@ class BathroomHumidityFanSpec extends Specification {
         when: hub.advance(120); humidity(45); hub.advance(60); humidity(47)   // +5 in 3 min, 7% above
         then:
         fan.commandNames() == ["on"]
-        hub.state.holding
+        st().holding
         hub.logsMatching("rose 5")
     }
 
@@ -188,5 +196,66 @@ class BathroomHumidityFanSpec extends Specification {
         given: ref.states.humidity = 37; ref.states.temperature = 74
         when: humidity(49)
         then: fan.commandNames() == ["on"]
+    }
+
+    // ── Several bathrooms in one app ─────────────────────────────────────────
+
+    private void guestHumidity(Number v) { hub.script.humidityHandler(hub.event(guestBath, "humidity", v.toString())) }
+
+    def "a shower in one bathroom starts only that bathroom's fan"() {
+        when: guestHumidity(55)
+        then:
+        guestFan.commandNames() == ["on"]
+        fan.calls.isEmpty()
+        guest().holding
+        !st().holding
+        hub.logsMatching("Guest Bathroom: humidity")
+    }
+
+    def "an off in one bathroom is refused without touching the other"() {
+        given: guestHumidity(60); hub.script.fanHandler(hub.event(guestFan, "switch", "on", "digital")); guestFan.calls.clear()
+        when: hub.script.fanHandler(hub.event(guestFan, "switch", "off", "physical"))
+        then:
+        guestFan.commandNames().first() == "on"
+        fan.calls.isEmpty()
+    }
+
+    def "a reference change re-evaluates every bathroom"() {
+        given: ref.states.humidity = 30
+        when: hub.script.refHandler(hub.event(ref, "humidity", "30"))
+        then: "both are now 10+ above the reference"
+        fan.commandNames() == ["on"]
+        guestFan.commandNames() == ["on"]
+    }
+
+    def "each bathroom's time limit is its own"() {
+        given: humidity(60); echoOwnCommand()
+        hub.advance(1800)
+        guestHumidity(60); hub.script.fanHandler(hub.event(guestFan, "switch", "on", "digital"))
+        fan.calls.clear(); guestFan.calls.clear()
+
+        when: "the master's hour is up, the guest's isn't"
+        hub.advance(1801); hub.script.checkTimeLimits()
+
+        then:
+        fan.commandNames() == ["off"]
+        st().expired
+        guestFan.calls.isEmpty()
+        guest().holding
+        hub.scheduled.findAll { it.method == "checkTimeLimits" }.last().delay == 1800 - 1   // the guest's deadline is next
+    }
+
+    def "events from devices that aren't a configured bathroom are ignored"() {
+        given: def other = new FakeDevice(id: 999, displayName: "Kitchen Sensor", states: [humidity: 90])
+        when: hub.script.humidityHandler(hub.event(other, "humidity", "90"))
+        then: fan.calls.isEmpty() && guestFan.calls.isEmpty()
+    }
+
+    def "a one-bathroom setup ignores leftover settings for bathroom 2"() {
+        given: hub.settings.bathroomCount = 1
+        when: hub.script.updated()
+        then:
+        hub.subscriptions.count { it[1] == "switch" } == 1
+        !hub.state.containsKey("b2")
     }
 }
