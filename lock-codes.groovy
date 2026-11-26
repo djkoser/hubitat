@@ -61,7 +61,7 @@ def mainPage() {
 			input "locks", "capability.lock", title: "Locks" + small("Every lock this app manages codes on. Each person picks theirs from these."), multiple: true, required: true, submitOnChange: true
 		}
 		section("Texts") {
-			input "notifiers", "capability.notification", title: "Text" + small("Who is told when calendar codes are added or removed, and about problems."), multiple: true, required: false
+			input "notifiers", "capability.notification", title: "Text" + small("Who is told when calendar codes are added or removed, and about problems."), multiple: true, required: fals, submitOnChange: true
 		}
 		section("People") {
 			input "peopleCount", "number", title: "People" + small("How many people this app manages (1–${MAX_PEOPLE})."), range: "1..${MAX_PEOPLE}", defaultValue: 1, required: true, submitOnChange: true
