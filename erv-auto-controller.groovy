@@ -62,49 +62,49 @@ definition(
 
 preferences { page(name: "mainPage") }
 
-// Settings: name: [type, default, title, why this default (with [n] = REFERENCES entries)]
+// Settings: name: [type, default, short title, what it does, why this default ([n] = REFERENCES entries)]
 @groovy.transform.Field static final Map PARAMS = [
-	ervAutoCo2AboveOutdoor:    ["Number", 600,  "Indoor CO2 this many ppm above outdoor triggers ventilation",
+	ervAutoCo2AboveOutdoor:    ["Number", 600,  "Indoor CO₂ trigger (ppm over outdoor)", "Ventilate when indoor CO₂ is this far above outdoor CO₂.",
 		"Default 600 ppm. ASHRAE relates ~700 ppm above outdoor to 80% odor acceptability for visitors (a ventilation indicator, not a health limit) [1]; EN 16798-1 Category I (high expectation) rooms allow 550 above outdoor and Category II bedrooms 550 [2]. 600 sits between them."],
-	ervAutoCo2Buffer:          ["Number", 150,  "CO2 must fall this far below the threshold to clear",
+	ervAutoCo2Buffer:          ["Number", 150,  "Indoor CO₂ clear margin (ppm)", "The CO₂ trigger clears once the excess falls this far below it.",
 		"Default 150 ppm: about twice the CO2 sensor's accuracy near 1000 ppm (±40 ppm ±3% of reading ≈ ±70 ppm) [3], so sensor error alone can't flip the decision back and forth."],
-	ervAutoOutdoorCo2Default:  ["Number", 420,  "Outdoor CO2 (ppm) assumed when no outdoor monitor reports it",
+	ervAutoOutdoorCo2Default:  ["Number", 420,  "Outdoor CO₂ fallback (ppm)", "Outdoor CO₂ assumed when no outdoor monitor reports it.",
 		"Default 420 ppm: the global background (NOAA global mean 422.8 ppm in 2024, rising about 2.5 ppm a year) [4]. Used only when no live outdoor monitor reports CO2."],
-	ervAutoCo2Critical:        ["Number", 1500, "Indoor CO2 (ppm) that forces On regardless of outdoor air",
+	ervAutoCo2Critical:        ["Number", 1500, "Indoor CO₂ critical (ppm)", "At or above this, ventilate even when outdoor air is bad.",
 		"Default 1500 ppm: UK school guidance BB101 caps the daily occupied average at 1500 ppm [6], and Health Canada's residential long-term (24-hour) limit is 1000 ppm [5]. At 1500 ventilation wins even against bad outdoor air."],
-	ervAutoVocHigh:            ["Number", 200,  "Indoor VOC index that triggers ventilation (100 = baseline)",
+	ervAutoVocHigh:            ["Number", 200,  "Indoor VOC trigger (index)", "Ventilate at or above this VOC index (100 = the sensor's 24-hour average).",
 		"Default 200. The VOC index puts each sensor's 24-hour average at 100 [7]; Sensirion's own example acts at 150 [8], and vendor scales call 200–249 moderate [16]. 200 leaves a margin above Sensirion's example for normal cooking/cleaning swings."],
-	ervAutoVocBuffer:          ["Number", 25,   "VOC index hysteresis",
+	ervAutoVocBuffer:          ["Number", 25,   "Indoor VOC clear margin (index)", "The VOC trigger clears once the index falls this far below it.",
 		"Default 25 index points (clears at 175): above the sensor's ±15-point variation [9], so noise can't flip it, but shallow enough that ventilation can reach it. Dilution only brings indoor VOCs down toward an equilibrium set by indoor sources, which can sit well above Sensirion's 150 example level [8]; a deeper clear point can keep the ERV running for hours with no further gain."],
-	ervAutoNoxHigh:            ["Number", 100,  "Indoor NOx index that triggers ventilation (1 = baseline)",
+	ervAutoNoxHigh:            ["Number", 100,  "Indoor NOx trigger (index)", "Ventilate at or above this NOx index (1 = clean air).",
 		"Default 100. The NOx index is 1 in clean air and rises with combustion such as a gas stove [10]; device-to-device variation is ±50 points [9], so 100 is clearly above that, and vendor scales start 'polluted' at 100 [16]."],
-	ervAutoNoxBuffer:          ["Number", 15,   "NOx index hysteresis",
+	ervAutoNoxBuffer:          ["Number", 15,   "Indoor NOx clear margin (index)", "The NOx trigger clears once the index falls this far below it.",
 		"Default 15 index points: above the sensor's ±10-point repeatability [9]."],
-	ervAutoPm25High:           ["Decimal", 15,  "Indoor PM2.5 (µg/m³) that triggers filtering/ventilation",
+	ervAutoPm25High:           ["Decimal", 15,  "Indoor PM2.5 trigger (µg/m³)", "Filter or ventilate at or above this.",
 		"Default 15 µg/m³: the WHO 24-hour PM2.5 guideline [11]."],
-	ervAutoPm25Buffer:         ["Decimal", 5,   "Indoor PM2.5 hysteresis",
+	ervAutoPm25Buffer:         ["Decimal", 5,   "Indoor PM2.5 clear margin (µg/m³)", "The PM2.5 trigger clears once it falls this far below it.",
 		"Default 5 µg/m³: clears at 10, midway between the WHO annual (5) and 24-hour (15) guidelines [11]."],
-	ervAutoOutdoorPm25High:    ["Decimal", 35,  "Outdoor PM2.5 (µg/m³) considered bad",
+	ervAutoOutdoorPm25High:    ["Decimal", 35,  "Outdoor PM2.5 limit (µg/m³)", "At or above this, outdoor air counts as bad and the ERV doesn't bring it in.",
 		"Default 35 µg/m³: the US EPA 24-hour PM2.5 standard; AQI 'Unhealthy for Sensitive Groups' starts at 35.5 [12]. This is also how AQI is used here, since the monitors' AQI is computed from PM2.5."],
-	ervAutoOutdoorPm25Buffer:  ["Decimal", 5,   "Outdoor PM2.5 hysteresis",
+	ervAutoOutdoorPm25Buffer:  ["Decimal", 5,   "Outdoor PM2.5 clear margin (µg/m³)", "Outdoor PM2.5 counts as fine again once it falls this far below the limit.",
 		"Default 5 µg/m³: clears at 30, safely inside the EPA 'Moderate' band (9.1–35.4) [12]."],
-	ervAutoPm25Margin:         ["Decimal", 10,  "Outdoor PM2.5 must be this much lower than indoor to ventilate for PM",
+	ervAutoPm25Margin:         ["Decimal", 10,  "PM2.5 outdoor advantage (µg/m³)", "Ventilate for indoor PM2.5 only when outdoor PM2.5 is at least this much lower; otherwise just filter.",
 		"Default 10 µg/m³: the PM sensor's stated consistency is ±10 µg/m³ below 100 µg/m³ [13], so a smaller gap between two sensors may not be real."],
-	ervAutoOutdoorVocSpike:    ["Number", 400,  "Outdoor VOC index that alone blocks ventilation (a strong spike; 100 = normal for that sensor)",
+	ervAutoOutdoorVocSpike:    ["Number", 400,  "Outdoor VOC limit (index)", "A spike to this index blocks ventilation by itself (100 = normal for that sensor).",
 		"Default 400: the top fifth of the 1–500 scale [7]. Lower outdoor values don't block ventilation, because VOC indices are relative to each sensor and indoor VOCs usually run 2–5× (up to 10×) outdoor levels [14]."],
-	ervAutoOutdoorNoxHigh:     ["Number", 100,  "Outdoor NOx index considered bad",
+	ervAutoOutdoorNoxHigh:     ["Number", 100,  "Outdoor NOx limit (index)", "At or above this, outdoor air counts as bad (exhaust or combustion nearby).",
 		"Default 100: same basis as the indoor NOx trigger (baseline 1 [10], ±50 device variation [9], vendor 'polluted' from 100 [16]); signals exhaust or combustion nearby."],
-	ervAutoOutdoorGasBuffer:   ["Number", 25,   "Outdoor VOC/NOx hysteresis",
+	ervAutoOutdoorGasBuffer:   ["Number", 25,   "Outdoor VOC/NOx clear margin (index)", "Outdoor VOC and NOx count as fine again once they fall this far below their limits.",
 		"Default 25 index points: above the NOx sensor's ±10 repeatability and the VOC sensor's ±15 variation [9]."],
-	ervAutoMinRunMinutes:      ["Number", 30,   "Once started, the ERV / air handler runs at least this many minutes",
+	ervAutoMinRunMinutes:      ["Number", 30,   "Minimum run (minutes)", "Once started, the ERV or air handler runs at least this long.",
 		"Default 30 minutes: longer than ERV makers' own 20-minute intermittent run [15], to run in long stretches and limit starts."],
-	ervAutoMinOffMinutes:      ["Number", 15,   "Once stopped, the ERV / air handler stays off at least this many minutes",
+	ervAutoMinOffMinutes:      ["Number", 15,   "Minimum off (minutes)", "Once stopped, the ERV or air handler stays off at least this long.",
 		"Default 15 minutes: with run time ≥ 30, at most two starts an hour. ECM motors ramp up gently, so each start causes little stress [17]; a longer off time mainly delays the response to rising CO2."],
-	ervAutoStaleMinutes:       ["Number", 15,   "Minutes without a sensor update before fail-safe",
+	ervAutoStaleMinutes:       ["Number", 15,   "Monitor offline after (minutes)", "A monitor with no update for this long counts as offline; with all indoor or all outdoor monitors offline, the fail-safe state applies.",
 		"Default 15 minutes: the AirGradient Local driver reads each monitor every 60 seconds [19], so this is 15 missed readings, long enough to ride out a Wi-Fi blip."],
-	ervAutoIdleState:          ["String", "Off", "State when air is good: Off, Recirculate or On",
+	ervAutoIdleState:          ["String", "Off", "When air is good", "What the equipment does when no reading needs action: Off, Recirculate or On.",
 		"Default Off: ventilate only when a sensor shows a need (owner's choice). For comparison, ASHRAE 62.2 sizes continuous whole-house ventilation instead [18]."],
-	ervAutoFailSafeState:      ["String", "On",  "State when a sensor is offline: On, Recirculate or Off",
+	ervAutoFailSafeState:      ["String", "On",  "When monitors are offline", "What the equipment does with no air-quality data: On, Recirculate or Off.",
 		"Default On: with no air-quality data, ventilating is the safe choice, matching ASHRAE 62.2's continuous-ventilation baseline [18]."],
 ]
 // Citations shown in the app UI: [n] -> [text, URL]
@@ -141,11 +141,11 @@ preferences { page(name: "mainPage") }
 def mainPage() {
 	dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
 		section("Devices") {
-			input "autoSwitch", "capability.switch", title: "Auto mode switch (controller acts only while it is on)", required: true
-			input "indoor", "capability.airQuality", title: "Indoor monitors (AirGradient ONE; worst room decides)", multiple: true, required: true
-			input "outdoor", "capability.airQuality", title: "Outdoor monitors (AirGradient Open Air)", multiple: true, required: true
-			input "ervStopRelay", "capability.switch", title: "ERV stop relay (on = ERV stopped)", required: true
-			input "ahStopRelay", "capability.switch", title: "Air handler stop relay (on = air handler stopped)", required: true
+			input "autoSwitch", "capability.switch", title: "Auto mode switch<br><small style='color:#666'>The controller acts only while this switch is on.</small>", required: true
+			input "indoor", "capability.airQuality", title: "Indoor monitors<br><small style='color:#666'>AirGradient ONE monitors; the worst room decides.</small>", multiple: true, required: true
+			input "outdoor", "capability.airQuality", title: "Outdoor monitors<br><small style='color:#666'>AirGradient Open Air monitors.</small>", multiple: true, required: true
+			input "ervStopRelay", "capability.switch", title: "ERV stop relay<br><small style='color:#666'>On = ERV stopped (normally closed).</small>", required: true
+			input "ahStopRelay", "capability.switch", title: "Air handler stop relay<br><small style='color:#666'>On = air handler stopped (normally closed).</small>", required: true
 		}
 		if (app.id) {
 			section("Status") {
@@ -153,9 +153,9 @@ def mainPage() {
 			}
 		}
 		section("Thresholds") {
-			paragraph "<small>Each setting shows its default and why it was chosen; [n] refers to the References section below.</small>"
+			paragraph "<small>Under each setting: what it does, then its default and why; [n] refers to the References section below.</small>"
 			PARAMS.each { n, d ->
-				def title = "${d[2]}<br><small style='color:#666'>${d[3]}</small>"   // always visible (a description is only a placeholder)
+				def title = "${d[2]}<br><small style='color:#666'>${d[3]} ${d[4]}</small>"   // always visible (a description is only a placeholder)
 				if (d[0] == "String") input n, "enum", title: title, options: STATES, defaultValue: d[1], required: false
 				else input n, d[0] == "Decimal" ? "decimal" : "number", title: title, defaultValue: d[1], required: false
 			}
@@ -164,7 +164,7 @@ def mainPage() {
 			paragraph REFERENCES.collect { k, r -> "[${k}] <a href='${r[1]}' target='_blank'>${r[0]}</a>" }.join("<br>")
 		}
 		section("Logging") {
-			input "logEnable", "bool", title: "Debug logging (auto-off after 30 min)", defaultValue: false
+			input "logEnable", "bool", title: "Debug logging<br><small style='color:#666'>Turns itself off after 30 minutes.</small>", defaultValue: false
 		}
 	}
 }

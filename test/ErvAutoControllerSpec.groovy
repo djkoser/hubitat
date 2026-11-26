@@ -208,6 +208,16 @@ class ErvAutoControllerSpec extends Specification {
         then: hub.state.flags.inVocBad
     }
 
+    def "settings have short titles, with what they do and why in the description"() {
+        expect:
+        hub.script.PARAMS.each { String name, List d ->
+            assert d.size() == 5 : name
+            assert d[2].length() <= 40 : "${name} title too long: ${d[2]}"
+            assert !(d[2] =~ /this many|triggers|considered|hysteresis/) : "${name} title holds detail: ${d[2]}"
+            assert d[3] && d[4]?.startsWith("Default") : name
+        }
+    }
+
     def "does nothing while another ERV mode is selected"() {
         given: auto.states.switch = "off"
         when: hub.script.evaluate()
@@ -326,7 +336,7 @@ class ErvAutoControllerSpec extends Specification {
         def params = hub.script.PARAMS
         def refs = hub.script.REFERENCES
         expect:
-        params.every { n, d -> d.size() == 4 && d[3].startsWith("Default ") && d[3] =~ /\[\d+\]/ }
+        params.every { n, d -> d.size() == 5 && d[4].startsWith("Default ") && d[4] =~ /\[\d+\]/ }
         params.values().collectMany { d -> (d[3] =~ /\[(\d+)\]/).collect { it[1] as Integer } }.every { refs.containsKey(it) }
         refs.values().every { it[1].startsWith("https://") }
     }
