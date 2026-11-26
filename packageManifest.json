@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.27.2",
+  "version": "1.28.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -52,6 +52,14 @@
       "name": "Chromecast Reconnect",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/chromecast-reconnect.groovy",
+      "required": false,
+      "oauth": false
+    },
+    {
+      "id": "6a351bed-df5e-4abe-80bd-c5730a0ce2ce",
+      "name": "Lock Codes",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/lock-codes.groovy",
       "required": false,
       "oauth": false
     }
