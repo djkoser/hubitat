@@ -1,7 +1,7 @@
 {
   "packageName": "David Koser's Hubitat Apps & Drivers",
   "author": "David Koser",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "minimumHEVersion": "2.2.0",
   "documentationLink": "https://github.com/djkoser/hubitat/blob/main/README.md",
   "communityLink": "",
@@ -97,6 +97,13 @@
       "name": "ERV Status",
       "namespace": "djkoser",
       "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/erv-status.groovy",
+      "required": false
+    },
+    {
+      "id": "29048f1d-ac88-4f85-887a-09e45ad7b99b",
+      "name": "Safety Status",
+      "namespace": "djkoser",
+      "location": "https://raw.githubusercontent.com/djkoser/hubitat/refs/heads/main/safety-status.groovy",
       "required": false
     }
   ]

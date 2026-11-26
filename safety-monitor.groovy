@@ -27,6 +27,9 @@
  *
  * Timings are this app's own settings. It publishes intrusionMonitoringEnabled and
  * safetyStatus to hub variables of those names, if they exist, for dashboards and other apps.
+ * It also creates and updates a view-only "Safety Status" device (driver safety-status.groovy)
+ * that shows intrusion Armed / Disarmed / Alert, the most serious active hazard and the number
+ * of devices offline, for Google Home and dashboards. It has no commands, so it can't disarm.
  *
  * Cameras are the devices from Hubitat's built-in Reolink Integration, which receives the NVR's
  * AI detections over a live local connection (person / vehicle / pet / package / motion
@@ -136,6 +139,8 @@ def initialize() {
 
 	runEvery1Hour("healthCheck")
 	scheduleReminder()
+
+	ensureStatusDevice()
 
 	// Sync arming with the locks' current state without announcing a change.
 	state.armed = state.armed ?: false
@@ -273,17 +278,20 @@ private void startAlert(String key, String text) {
 	state.repeatsLeft = (param("safetyRepeatCount") as BigDecimal) as Integer
 	speak(text)
 	scheduleRepeat()
+	publishStatus()
 }
 
 private void clearAlert(String key) {
 	def active = state.activeAlerts ?: [:]
 	if (active.remove(key) != null) state.activeAlerts = active
 	if (!active) unschedule("repeatAlerts")
+	publishStatus()
 }
 
 private void clearAllAlerts() {
 	state.activeAlerts = [:]
 	unschedule("repeatAlerts")
+	publishStatus()
 }
 
 private void scheduleRepeat() {
@@ -390,6 +398,42 @@ private void publishStatus() {
 	def bad = (state.unhealthy ?: [:]).size()
 	if (bad) s += " (${bad} device${bad == 1 ? '' : 's'} offline)"
 	if (getGlobalVar("safetyStatus") != null) setGlobalVar("safetyStatus", s)
+	updateStatusDevice(s, bad)
+}
+
+// ── Status device (view only, for Google Home and dashboards) ───────────────
+
+private String statusDni() { "safety-status-${app.id}" }
+
+private void ensureStatusDevice() {
+	if (getChildDevice(statusDni())) return
+	try {
+		addChildDevice("djkoser", "Safety Status", statusDni(), [label: "Safety Status", isComponent: false])
+		log.info "Safety Monitor: created the Safety Status device"
+	} catch (e) {
+		log.warn "Safety Monitor: couldn't create the Safety Status device (is the Safety Status driver installed?): ${e.message}"
+	}
+}
+
+// Most serious first; an intrusion alert is shown by the intrusion attribute instead
+@groovy.transform.Field static final Map HAZARDS = ["co": "Carbon monoxide", "smoke": "Smoke", "leak": "Water leak"]
+
+private String hazardText() {
+	def kinds = (state.activeAlerts ?: [:]).keySet().collect { it.toString().tokenize(":")[0] }
+	return HAZARDS.find { k, v -> kinds.contains(k) }?.value ?: "None"
+}
+
+private void updateStatusDevice(String summary, int offline) {
+	def dev = getChildDevice(statusDni())
+	if (!dev) return
+	def set = { String name, String value, String text = null ->
+		if (dev.currentValue(name)?.toString() != value) dev.sendEvent(name: name, value: value, descriptionText: text)
+	}
+	def intrusion = state.alertActive ? "Alert" : (state.armed ? "Armed" : "Disarmed")
+	set("intrusion", intrusion, "Intrusion monitoring is ${intrusion.toLowerCase()}")
+	set("hazard", hazardText())
+	set("devicesOffline", Math.min(offline, 50).toString())
+	set("safetyStatus", summary)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -192,4 +192,41 @@ class SafetyMonitorSpec extends Specification {
         when: hub.settings.alertDetections = ["person", "package", "bogus"]; hub.script.initialize()
         then: hub.subscriptions.findAll { it[2] == "cameraDetectionHandler" }.collect { it[1] } as Set == ["person", "package"] as Set
     }
+
+    private Map status() { hub.children.values().first().states }
+
+    def "creates the Safety Status device and keeps intrusion, hazard and offline count current"() {
+        when: hub.script.installed()
+        then:
+        hub.children.size() == 1
+        hub.children.values().first().displayName == "Safety Status"
+
+        when: hub.script.armIfAllLocked()
+        then:
+        status().intrusion == "Armed"
+        status().hazard == "None"
+        status().safetyStatus == "Armed"
+
+        when: hub.script.doorOpenHandler(hub.event(frontDoor, "contact", "open"))
+        then: status().intrusion == "Alert"
+
+        when: hub.script.leakHandler(hub.event(leak, "water", "wet"))
+        then: status().hazard == "Water leak"
+
+        when: hub.script.cancelHandler(hub.event(cancel, "switch", "on"))
+        then:
+        status().intrusion == "Armed"
+        status().hazard == "None"
+
+        when: hub.script.lockHandler(hub.event(garage, "lock", "unlocked"))
+        then: status().intrusion == "Disarmed"
+    }
+
+    def "the most serious hazard is shown, and a cleared leak returns it to None"() {
+        given: hub.script.installed()
+        when: hub.script.leakHandler(hub.event(leak, "water", "wet"))
+        then: status().hazard == "Water leak"
+        when: hub.script.leakHandler(hub.event(leak, "water", "dry"))
+        then: status().hazard == "None"
+    }
 }
