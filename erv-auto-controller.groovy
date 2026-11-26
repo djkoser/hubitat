@@ -88,7 +88,7 @@ preferences { page(name: "mainPage") }
 		"Default 35 µg/m³: the US EPA 24-hour PM2.5 standard; AQI 'Unhealthy for Sensitive Groups' starts at 35.5 [12]. This is also how AQI is used here, since the monitors' AQI is computed from PM2.5."],
 	ervAutoOutdoorPm25Buffer:  ["Decimal", 5,   "Outdoor PM2.5 deadband (µg/m³)", "Once bad, outdoor PM2.5 stays bad until it falls this far below the limit.",
 		"Default 5 µg/m³: clears at 30, safely inside the EPA 'Moderate' band (9.1–35.4) [12]."],
-	ervAutoPm25Margin:         ["Decimal", 10,  "PM2.5 indoor–outdoor gap (µg/m³)", "Ventilate for indoor PM2.5 only when outdoor PM2.5 is at least this much lower; otherwise just filter.",
+	ervAutoPm25Margin:         ["Decimal", 10,  "PM2.5 indoor–outdoor delta (µg/m³)", "Ventilate for indoor PM2.5 only when outdoor PM2.5 is at least this much lower; otherwise just filter.",
 		"Default 10 µg/m³: the PM sensor's stated consistency is ±10 µg/m³ below 100 µg/m³ [13], so a smaller gap between two sensors may not be real."],
 	ervAutoOutdoorVocSpike:    ["Number", 400,  "Outdoor VOC limit (index)", "A spike to this index blocks ventilation by itself (100 = normal for that sensor).",
 		"Default 400: the top fifth of the 1–500 scale [7]. Lower outdoor values don't block ventilation, because VOC indices are relative to each sensor and indoor VOCs usually run 2–5× (up to 10×) outdoor levels [14]."],
