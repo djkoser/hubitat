@@ -51,4 +51,18 @@ class ChromecastReconnectSpec extends Specification {
 		hub.subscriptions.any { it[1] == "systemStart" }
 		hub.isScheduled("reconnectOffline")
 	}
+
+	def "a hub restart checks the speakers two minutes later"() {
+		when: hub.script.startupHandler([name: "systemStart"])
+		then: hub.scheduled.find { it.method == "reconnectOffline" }?.delay == 120
+	}
+
+	def "several speakers offline are all reconnected in one pass"() {
+		given: entry.states.networkStatus = "offline"; kitchen.states.networkStatus = "offline"
+		when: hub.script.reconnectOffline()
+		then:
+		entry.commandNames() == ["initialize"]
+		kitchen.commandNames() == ["initialize"]
+		hub.scheduled.count { it.method == "reconnectOffline" } == 1
+	}
 }

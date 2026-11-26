@@ -229,4 +229,51 @@ class SafetyMonitorSpec extends Specification {
         when: hub.script.leakHandler(hub.event(leak, "water", "dry"))
         then: status().hazard == "None"
     }
+
+    def "with several hazards active, the most serious is shown, falling back as each clears"() {
+        given:
+        FakeDevice smoke = new FakeDevice(id: 281, displayName: "Smoke Alarm", states: [smoke: "clear"])
+        FakeDevice co = new FakeDevice(id: 282, displayName: "CO Alarm", states: [carbonMonoxide: "clear"])
+        hub.script.installed()
+
+        when:
+        hub.script.leakHandler(hub.event(leak, "water", "wet"))
+        hub.script.smokeHandler(hub.event(smoke, "smoke", "detected"))
+        hub.script.coHandler(hub.event(co, "carbonMonoxide", "detected"))
+        then: status().hazard == "Carbon monoxide"
+
+        when: hub.script.coHandler(hub.event(co, "carbonMonoxide", "clear"))
+        then: status().hazard == "Smoke"
+
+        when: hub.script.smokeHandler(hub.event(smoke, "smoke", "clear"))
+        then: status().hazard == "Water leak"
+    }
+
+    def "an offline device changes neither the intrusion nor the hazard reading, and no offline count is sent"() {
+        given: hub.script.installed(); hub.script.armIfAllLocked()
+        leak.lastActivity = new Date(hub.clock - 30L * 3600 * 1000)   // silent longer than the stale limit
+
+        when: hub.script.healthCheck()
+
+        then:
+        hub.state.unhealthy.containsKey("108")
+        status().intrusion == "Armed"
+        status().hazard == "None"
+        !status().containsKey("devicesOffline")
+        status().safetyStatus == "Armed (1 device offline)"   // the dashboard summary still says so
+    }
+
+    def "if the Safety Status driver isn't installed, monitoring still works and a warning is logged"() {
+        given: hub.childDriverError = "Device type not found"
+
+        when:
+        hub.script.installed()
+        hub.script.armIfAllLocked()
+
+        then:
+        hub.children.isEmpty()
+        hub.logsMatching("couldn't create the Safety Status device")
+        hub.state.armed
+        spoken() == ["Intrusion monitoring has been armed."]
+    }
 }

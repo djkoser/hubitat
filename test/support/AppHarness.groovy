@@ -26,6 +26,7 @@ class AppHarness {
     List<Map> http = []                         // [method, callback, params, data]
     List<List> subscriptions = []
     Map<String, FakeDevice> children = [:]      // child devices by DNI
+    String childDriverError = null              // set to make addChildDevice throw (driver not installed)
     def script
 
     AppHarness(String file, Map settings, Map globals = [:]) {
@@ -61,6 +62,7 @@ class AppHarness {
             // Child devices are FakeDevices (in h.children) behind a ChildDeviceWrapper facade
             getChildDevice   : { String dni -> h.children[dni] ? h.childWrapper(h.children[dni]) : null },
             addChildDevice   : { Object[] a ->   // (namespace, typeName, dni, props)
+                if (h.childDriverError) throw new IllegalArgumentException(h.childDriverError)
                 def props = a.length > 3 ? a[3] : [:]
                 h.children[a[2]] = new FakeDevice(id: 900L + h.children.size(), displayName: props?.label ?: a[1])
                 h.childWrapper(h.children[a[2]])
