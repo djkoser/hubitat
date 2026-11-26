@@ -211,13 +211,15 @@ def autoSwitchHandler(evt) {
 def evaluate() {
 	def p = PARAMS.collectEntries { n, d -> [(n): param(n)] }
 	if (autoSwitch?.currentValue("switch") != "on") {
-		updateStatusDevice(measure(p), p)   // readings stay current in manual modes too
+		def m = measure(p)
+		state.flags = updateFlags(state.flags ?: [:], m, p)   // keep high/ok current for the status table
+		updateStatusDevice(m, p)   // readings stay current in manual modes too
 		return
 	}
 
-	def f = state.flags ?: [:]
-
 	def r = measure(p)
+	def f = updateFlags(state.flags ?: [:], r, p)
+	state.flags = f
 	def inLive = r.inLive, outLive = r.outLive, stale = r.stale
 	def inCo2M = r.inCo2M, inVocM = r.inVocM, inNoxM = r.inNoxM, inPmM = r.inPmM
 	def inCo2 = inCo2M?.v, inVoc = inVocM?.v, inNox = inNoxM?.v, inPm = inPmM?.v
@@ -225,15 +227,6 @@ def evaluate() {
 	def outCo2 = r.outCo2, co2Excess = r.co2Excess
 	boolean multiIn = indoorDevs().size() > 1
 	def where = { m -> (multiIn && m) ? " (${m.name})" : "" }
-
-	f.inCo2Bad  = hyst(f.inCo2Bad,  co2Excess, p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer)
-	f.inVocBad  = hyst(f.inVocBad,  inVoc, p.ervAutoVocHigh,         p.ervAutoVocBuffer)
-	f.inNoxBad  = hyst(f.inNoxBad,  inNox, p.ervAutoNoxHigh,         p.ervAutoNoxBuffer)
-	f.inPmBad   = hyst(f.inPmBad,   inPm,  p.ervAutoPm25High,        p.ervAutoPm25Buffer)
-	f.outPmBad  = hyst(f.outPmBad,  outPm, p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer)
-	f.outVocBad = hyst(f.outVocBad, outVoc, p.ervAutoOutdoorVocSpike, p.ervAutoOutdoorGasBuffer)
-	f.outNoxBad = hyst(f.outNoxBad, outNox, p.ervAutoOutdoorNoxHigh, p.ervAutoOutdoorGasBuffer)
-	state.flags = f
 
 	// Each reading against its limits, for the reason text
 	def co2Text = co2Excess == null ? "CO2 —" :
@@ -481,6 +474,21 @@ private void enforce(String s) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+// Each "high" flag from the current readings, with hysteresis against the previous flags.
+// Runs in manual modes too (without acting), so the status table and the first Auto
+// decision start from current readings rather than whatever was latched when Auto was off.
+private Map updateFlags(Map prev, Map r, Map p) {
+	Map f = [:] + prev
+	f.inCo2Bad  = hyst(f.inCo2Bad,  r.co2Excess,   p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer)
+	f.inVocBad  = hyst(f.inVocBad,  r.inVocM?.v,   p.ervAutoVocHigh,         p.ervAutoVocBuffer)
+	f.inNoxBad  = hyst(f.inNoxBad,  r.inNoxM?.v,   p.ervAutoNoxHigh,         p.ervAutoNoxBuffer)
+	f.inPmBad   = hyst(f.inPmBad,   r.inPmM?.v,    p.ervAutoPm25High,        p.ervAutoPm25Buffer)
+	f.outPmBad  = hyst(f.outPmBad,  r.outPmM?.v,   p.ervAutoOutdoorPm25High, p.ervAutoOutdoorPm25Buffer)
+	f.outVocBad = hyst(f.outVocBad, r.outVocM?.v,  p.ervAutoOutdoorVocSpike, p.ervAutoOutdoorGasBuffer)
+	f.outNoxBad = hyst(f.outNoxBad, r.outNoxM?.v,  p.ervAutoOutdoorNoxHigh,  p.ervAutoOutdoorGasBuffer)
+	return f
+}
+
 // Trips at >= high, clears at <= high - buffer, otherwise keeps the previous value.
 // Unknown readings (sensor absent) count as "not bad".
 private boolean hyst(prev, value, high, buffer) {
@@ -544,9 +552,9 @@ private String readingsTable() {
 		"<td>${bad ? "<b style='color:#c00'>high</b>" : 'ok'}</td></tr>"
 	}
 	def co2Now = r.co2Excess == null ? "—" :
-		"${fmt(r.co2Excess)} <small>(${fmt(r.inCo2M.v)}${multi ? ' ' + r.inCo2M.name : ''} vs outdoor ${fmt(r.outCo2)})</small>"
+		"${fmt(r.co2Excess)} <small>(= ${fmt(r.inCo2M.v)} ${multi ? 'in ' + r.inCo2M.name : 'indoor'} − ${fmt(r.outCo2)} outdoor)</small>"
 	def rows = [
-		row("Indoor CO₂ above outdoor (ppm)", co2Now, p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer, f.inCo2Bad as boolean),
+		row("Indoor CO₂ minus outdoor (ppm)", co2Now, p.ervAutoCo2AboveOutdoor, p.ervAutoCo2Buffer, f.inCo2Bad as boolean),
 		row("Indoor VOC index", cell(r.inVocM), p.ervAutoVocHigh, p.ervAutoVocBuffer, f.inVocBad as boolean),
 		row("Indoor NOx index", cell(r.inNoxM), p.ervAutoNoxHigh, p.ervAutoNoxBuffer, f.inNoxBad as boolean),
 		row("Indoor PM2.5 (µg/m³)", cell(r.inPmM), p.ervAutoPm25High, p.ervAutoPm25Buffer, f.inPmBad as boolean),

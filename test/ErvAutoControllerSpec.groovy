@@ -173,9 +173,39 @@ class ErvAutoControllerSpec extends Specification {
         when: def html = hub.script.readingsTable()
 
         then:
-        html.contains("<td>Indoor CO₂ above outdoor (ppm)</td><td>680 <small>(1100 Master Bedroom vs outdoor 420)</small></td><td>≥ 600</td><td>≤ 450</td><td><b style='color:#c00'>high</b></td>")
+        html.contains("<td>Indoor CO₂ minus outdoor (ppm)</td><td>680 <small>(= 1100 in Master Bedroom − 420 outdoor)</small></td><td>≥ 600</td><td>≤ 450</td><td><b style='color:#c00'>high</b></td>")
         html.contains("<td>Indoor VOC index</td><td>100 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 175</td><td>ok</td>")
         html.contains("<td>Outdoor PM2.5 (µg/m³)</td><td>4 <small>(Outdoor)</small></td><td>≥ 35</td><td>≤ 30</td><td>ok</td>")
+    }
+
+    def "in a manual mode the table's high/ok marks follow live readings, without touching the equipment"() {
+        given: "VOC was high when Auto was last on"
+        living.states.vocIndex = 250
+        evaluate()
+        auto.states.switch = "off"
+        ervRelay.calls.clear(); ahRelay.calls.clear()
+
+        when: "it falls below the clear level while in a manual mode"
+        living.states.vocIndex = 142
+        hub.script.evaluate()
+        def html = hub.script.readingsTable()
+
+        then:
+        html.contains("<td>Indoor VOC index</td><td>142 <small>(Living Room)</small></td><td>≥ 200</td><td>≤ 175</td><td>ok</td>")
+        ervRelay.calls.isEmpty() && ahRelay.calls.isEmpty()
+    }
+
+    def "in a manual mode a reading between trigger and clear keeps its last mark (hysteresis)"() {
+        given:
+        living.states.vocIndex = 250
+        evaluate()
+        auto.states.switch = "off"
+
+        when:
+        living.states.vocIndex = 190
+        hub.script.evaluate()
+
+        then: hub.state.flags.inVocBad
     }
 
     def "does nothing while another ERV mode is selected"() {
